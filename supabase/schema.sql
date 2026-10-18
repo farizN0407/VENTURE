@@ -22,6 +22,8 @@ create table if not exists public.quiz_attempts (
   id bigint generated always as identity primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   challenge_slug text not null,
+  topic_slug text,
+  attempt_id uuid,
   score integer not null check (score between 0 and 100),
   correct_answers integer not null check (correct_answers between 0 and total_questions),
   total_questions integer not null check (total_questions > 0),
@@ -31,7 +33,10 @@ create table if not exists public.quiz_attempts (
 );
 alter table public.quiz_attempts add column if not exists skill_results jsonb not null default '[]'::jsonb;
 alter table public.quiz_attempts add column if not exists answer_details jsonb not null default '[]'::jsonb;
+alter table public.quiz_attempts add column if not exists topic_slug text;
+alter table public.quiz_attempts add column if not exists attempt_id uuid;
 create index if not exists quiz_attempts_user_created_at on public.quiz_attempts (user_id,created_at desc);
+create unique index if not exists quiz_attempts_user_attempt_id on public.quiz_attempts (user_id,attempt_id) where attempt_id is not null;
 
 create table if not exists public.module_completions (
   user_id uuid not null references auth.users(id) on delete cascade,

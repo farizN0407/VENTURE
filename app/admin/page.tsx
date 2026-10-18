@@ -52,7 +52,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
       {modules.map((module) => <details className="admin-editor" key={module.slug}><summary><span>{module.title}</span><small>{module.published ? "Terbit" : "Draft"} · {module.slug}</small></summary><ModuleForm action={saveModule} module={module} /><form action={deleteModule} className="admin-delete"><input type="hidden" name="slug" value={module.slug}/><button className="text-button" type="submit">Hapus materi</button></form></details>)}
     </section>
     <section className="admin-section"><div className="head"><div><div className="label">CHALLENGES & QUIZZES</div><h2>Challenge</h2><p>Kelola soal, opsi, kunci jawaban, pembahasan, kategori, dan tingkat kesulitan.</p></div></div>
-      <p className="admin-help">Slug konten database menggunakan awalan <code>custom-</code> agar tidak bertabrakan dengan 5 materi dan 8 challenge bawaan Promptly.</p>
+      <p className="admin-help">Slug konten database menggunakan awalan <code>custom-</code> agar tidak bertabrakan dengan 7 materi dan 8 challenge bawaan Promptly.</p>
       <details className="admin-editor" open><summary>Tambah challenge</summary><ChallengeForm action={saveChallenge}/></details>
       {managedChallenges.map((challenge) => <details className="admin-editor" key={challenge.slug}><summary><span>{challenge.title}</span><small>{challenge.published ? "Terbit" : "Draft"} · {challenge.slug}</small></summary><ChallengeForm action={saveChallenge} challenge={challenge} /><form action={deleteChallenge} className="admin-delete"><input type="hidden" name="slug" value={challenge.slug}/><button className="text-button" type="submit">Hapus challenge</button></form></details>)}
     </section>

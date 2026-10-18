@@ -1,16 +1,8 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 
-const challengeKeys = {
-  "prompt-battle": [2, 1, 3],
-  "can-you-trust-ai": [1, 0, 2],
-  "fix-the-prompt": [3, 1],
-  "ai-or-human": [2, 0],
-  "ai-in-real-life": [1, 2],
-  "ai-for-research": [1, 0, 1],
-  "critical-thinking": [1, 1],
-  "responsible-ai": [1, 1, 1],
-};
+const challengeSlugs = ["prompt-battle", "can-you-trust-ai", "fix-the-prompt", "ai-or-human", "ai-in-real-life", "ai-for-research", "critical-thinking", "responsible-ai"];
+const lessonSlugs = ["prompting", "fact-checking", "ai-knowledge", "practical-application", "ai-for-research", "critical-thinking", "responsible-ai"];
 
 const baseUrl = process.env.PROMPTLY_URL ?? "http://localhost:3000";
 const executablePath = process.env.CHROME_PATH ?? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
@@ -56,8 +48,8 @@ try {
     await page.goto(baseUrl, { waitUntil: "networkidle" });
     await page.locator(".hero-content .btn-main").click();
     await page.waitForURL("**/challenges");
-    assert.equal(await page.locator(".challenge-grid .challenge").count(), Object.keys(challengeKeys).length);
-    for (const slug of Object.keys(challengeKeys)) {
+    assert.equal(await page.locator(".challenge-grid .challenge").count(), challengeSlugs.length);
+    for (const slug of challengeSlugs) {
       const playLink = page.locator(`a.play-link[href='/challenges/${slug}']`);
       assert.equal(await playLink.count(), 1);
       await playLink.click();
@@ -71,31 +63,67 @@ try {
 
   await check("navigation and all lesson routes work", async () => {
     await page.goto(`${baseUrl}/learn`, { waitUntil: "networkidle" });
-    assert.equal(await page.locator(".lesson-card").count(), 5);
-    for (const slug of ["prompting", "fact-checking", "ai-for-research", "critical-thinking", "responsible-ai"]) {
+    assert.equal(await page.locator(".lesson-card").count(), lessonSlugs.length);
+    for (const slug of lessonSlugs) {
       const response = await page.goto(`${baseUrl}/learn/${slug}`, { waitUntil: "networkidle" });
       assert.equal(response?.status(), 200, `lesson ${slug}`);
-      await page.getByRole("link", { name: /Latihan dengan quiz/ }).waitFor();
+      await page.getByRole("link", { name: /Mulai quiz/ }).waitFor();
+      await page.getByRole("heading", { name: new RegExp(`Uji pemahaman:`, "i") }).waitFor();
+      assert.equal(await page.locator(".topic-quiz").count(), 1, `${slug} has its topic quiz`);
     }
   });
 
-  await check("all eight challenges can be completed with correct answers and accurate scores", async () => {
-    for (const [slug, answerKey] of Object.entries(challengeKeys)) {
-      const response = await page.goto(`${baseUrl}/challenges/${slug}`, { waitUntil: "networkidle" });
+  await check("all seven topic quizzes complete five questions and reveal scored review only after submission", async () => {
+    for (const slug of lessonSlugs) {
+      const response = await page.goto(`${baseUrl}/learn/${slug}`, { waitUntil: "networkidle" });
       assert.equal(response?.status(), 200, slug);
-      const questionCount = Number((await page.locator(".q-top span").nth(1).innerText()).match(/DARI (\d+)/)?.[1]);
-      assert.equal(questionCount, answerKey.length, `${slug} answer key length`);
-      const optionCount = await page.locator(".answer").count();
-      for (let index = 0; index < answerKey.length; index++) {
-        await page.locator(".answer").nth(answerKey[index]).click();
-        await page.locator(".feedback.show").getByText("Jawaban tepat.").waitFor();
-        assert.equal(await page.locator(".answer").count(), optionCount, `${slug} options remain consistent`);
-        if (index < answerKey.length - 1) await page.getByRole("button", { name: /Soal berikutnya/ }).click();
-        else await page.getByRole("button", { name: /Lihat hasil/ }).click();
+      const setupResponsePromise = page.waitForResponse((candidate) => candidate.url().includes("/api/topic-quizzes") && candidate.request().method() === "POST");
+      await page.reload({ waitUntil: "networkidle" });
+      const setupResponse = await setupResponsePromise;
+      assert.equal(setupResponse.status(), 200, `${slug} quiz setup`);
+      const setup = await setupResponse.json();
+      assert.equal(setup.questions.length, 5);
+      assert.ok(setup.questions.every((question) => !("correctIndex" in question) && !("correct_answer" in question)), "correct keys stay private before submit");
+      assert.ok(setup.questions.every((question) => question.options.every((option) => option.id === option.text && !/-option-\d+$/.test(option.id))), "option ids do not disclose original answer positions");
+      let resultResponsePromise;
+      for (let index = 0; index < 5; index++) {
+        if (index === 4) resultResponsePromise = page.waitForResponse((candidate) => candidate.url().includes("/api/quiz-attempts") && candidate.request().method() === "POST");
+        await page.locator(".topic-question-card .answer").first().click();
+        if (index < 4) await page.getByRole("button", { name: /Soal berikutnya/ }).click();
       }
-      await page.getByRole("heading", { name: "100/100" }).waitFor();
-      await page.getByText("Materi untuk langkah berikutnya").waitFor();
+      await page.locator(".result-score").waitFor();
+      const resultResponse = await resultResponsePromise;
+      const result = await resultResponse.json();
+      assert.equal(result.total_questions, 5);
+      assert.equal(result.review.length, 5);
+      assert.equal(result.score, Math.round(result.correct_answers * 100 / 5));
+      assert.ok(result.review.every((answer) => answer.explanation && answer.correct_answer), "full explanations follow submission");
+      const resultText = await page.locator(".result-card").innerText();
+      assert.match(resultText, /0\/100|20\/100|40\/100|60\/100|80\/100|100\/100/);
+      assert.match(resultText, /Guest|guest|tidak tersimpan|profil akun mana pun/i);
     }
+  });
+
+  await check("guest retry avoids recently completed questions when at least five unseen remain", async () => {
+    await page.goto(baseUrl, { waitUntil: "networkidle" });
+    await page.evaluate(() => localStorage.removeItem("promptly-guest-questions:prompting"));
+    await page.goto(`${baseUrl}/learn/prompting`, { waitUntil: "networkidle" });
+    const first = await page.locator(".topic-question-card .q-top span").nth(1).innerText();
+    for (let index = 0; index < 5; index++) {
+      await page.locator(".topic-question-card .answer").first().click();
+      if (index < 4) await page.getByRole("button", { name: /Soal berikutnya/ }).click();
+    }
+    await page.locator(".result-score").waitFor();
+    const firstSetup = await page.evaluate(() => JSON.parse(localStorage.getItem("promptly-guest-questions:prompting") ?? "[]"));
+    assert.equal(firstSetup.length, 5);
+    const nextResponsePromise = page.waitForResponse((candidate) => candidate.url().includes("/api/topic-quizzes") && candidate.request().method() === "POST");
+    await page.getByRole("button", { name: "Coba lima soal lain" }).click();
+    await page.locator(".topic-question-card").waitFor();
+    const nextResponse = await nextResponsePromise;
+    const next = await nextResponse.json();
+    assert.equal(next.questions.length, 5);
+    assert.equal(next.questions.filter((question) => firstSetup.includes(question.id)).length, 0);
+    assert.match(first, /SOAL 1 DARI 5/);
   });
 
   await check("pricing accurately disables unavailable Pro checkout", async () => {
@@ -148,6 +176,8 @@ try {
     assert.ok([401, 503].includes(response.status()), `unexpected status ${response.status()}`);
     const body = await response.json();
     assert.match(body.error, /Masuk|Supabase|Penyimpanan/);
+    const earlyFeedback = await page.request.post(`${baseUrl}/api/quiz-feedback`, { data: { challenge_slug: "prompt-battle", question_index: 0, option_index: 0 } });
+    assert.equal(earlyFeedback.status(), 409, "built-in topic quizzes cannot reveal per-answer correctness before completion");
   });
 
   await check("desktop and mobile layouts do not overflow horizontally", async () => {

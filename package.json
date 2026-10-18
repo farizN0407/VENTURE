@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test:browser": "node tools/browser-smoke.mjs"
+    "test:browser": "node tools/browser-smoke.mjs",
+    "test:questions": "node tools/question-bank-check.mjs"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",

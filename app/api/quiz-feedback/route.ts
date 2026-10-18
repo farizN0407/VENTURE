@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { challenges } from "@/lib/challenges";
 import { createClient } from "@/lib/supabase/server";
+import { CHALLENGE_TOPICS } from "@/lib/topic-quizzes";
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -18,6 +19,7 @@ export async function POST(request: Request) {
 
   const challenge = challenges.find((item) => item.slug === data.challenge_slug);
   if (challenge) {
+    if (CHALLENGE_TOPICS[challenge.slug]) return NextResponse.json({ error: "Topic quiz answers are revealed after all five responses are submitted." }, { status: 409 });
     const question = challenge.questions[data.question_index as number];
     if (!question || (data.option_index as number) < 0 || (data.option_index as number) >= question.options.length) return NextResponse.json({ error: "Question not found." }, { status: 404 });
     return NextResponse.json({ is_correct: data.option_index === question.correctIndex, explanation: question.explanation });
