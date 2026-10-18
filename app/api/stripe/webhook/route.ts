@@ -4,9 +4,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 type SubscriptionState = { userId: string; customerId: string; subscriptionId: string; status: string; currentPeriodEnd: number | null };
 
-async function persistSubscription(state: SubscriptionState) {
+async function persistSubscription(state: SubscriptionState, eventCreated: number) {
   const admin = createAdminClient();
-  const { error } = await admin.from("subscriptions").upsert({ user_id: state.userId, stripe_customer_id: state.customerId, stripe_subscription_id: state.subscriptionId, status: state.status, current_period_end: state.currentPeriodEnd ? new Date(state.currentPeriodEnd * 1000).toISOString() : null, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  const { error } = await admin.rpc("sync_stripe_subscription_event", { p_user_id: state.userId, p_customer_id: state.customerId, p_subscription_id: state.subscriptionId, p_status: state.status, p_period_end: state.currentPeriodEnd ? new Date(state.currentPeriodEnd * 1000).toISOString() : null, p_event_created: eventCreated });
   if (error) throw error;
 }
 
@@ -36,10 +36,10 @@ export async function POST(request: Request) {
       const session = event.data.object as Stripe.Checkout.Session;
       if (session.mode === "subscription" && typeof session.subscription === "string") {
         const subscription = await stripe.subscriptions.retrieve(session.subscription);
-        await persistSubscription(await subscriptionState(stripe, subscription));
+        await persistSubscription(await subscriptionState(stripe, subscription), event.created);
       }
     } else if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
-      await persistSubscription(await subscriptionState(stripe, event.data.object as Stripe.Subscription));
+      await persistSubscription(await subscriptionState(stripe, event.data.object as Stripe.Subscription), event.created);
     }
   } catch (error) {
     console.error("Stripe webhook persistence failed", { eventId: event.id, error });

@@ -21,15 +21,17 @@ Open `http://localhost:3000`. Run `npm run lint`, `npx tsc --noEmit`, and `npm r
 - The sample literacy profile on the landing page is illustrative and is not a user score or certification.
 - Pro billing is not offered in the UI. All lessons and included quizzes are currently free.
 
-## Supabase setup
+## Supabase setup and access controls
 
-1. Create a Supabase project.
-2. Copy `.env.example` to `.env.local`; set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from the project API settings.
-3. Run `supabase/schema.sql` in the Supabase SQL editor. It creates profiles, quiz attempts, and subscriptions with row-level security. Clients can read their own data and insert their own quiz attempts; subscription changes are server-only.
-4. Configure email confirmation and allowed redirect URLs in Supabase Auth for local and production domains.
-5. Never expose `SUPABASE_SERVICE_ROLE_KEY` to browser code. It is only used by the verified Stripe webhook and checkout association.
+1. Create a Supabase project and copy `.env.example` to `.env.local`.
+2. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and the server-only `SUPABASE_SERVICE_ROLE_KEY` from that project. Never prefix a secret with `NEXT_PUBLIC_` or expose the service-role key to browser code.
+3. Apply `supabase/schema.sql` in that project's SQL Editor. It adds profile, attempt, module completion, subscription, and database-managed learning content tables, RPCs, grants, and RLS policies. Public signup always receives the `user` role. The client cannot update roles, insert quiz scores, or write module completion records directly.
+4. To designate the single admin, create the account through normal signup, find that account's UUID in Supabase Auth, then run `select public.provision_designated_admin('USER-UUID'::uuid);` in SQL Editor as the project owner. The partial unique index prevents a second admin; the provisioning function is not executable by API roles. Do not add an admin role to signup metadata.
+5. Configure Supabase Auth email confirmation and allowed redirect URLs for local and production domains.
 
-Without Supabase credentials, quizzes still work, but account creation and saving results are unavailable and the account page explains that state. No local or fake account data is generated.
+Quiz answers are graded on the server. Static quiz attempts and lesson completions are saved only for an authenticated user when the server-side service-role key is configured. Database-managed challenge attempts are scored and saved by a restricted RPC. If configuration or a write fails, the UI reports that the result was not saved; guest results are session-only. No local or fake account data is generated.
+
+The admin CMS manages database content with `custom-` slugs so it cannot overwrite the curated lessons and challenges shipped in source. Public reads can see published content only. Correct options and explanations live in a separate restricted table and are returned through grading RPCs, not catalog queries. Existing installations must apply the current schema before relying on these policies.
 
 ## Stripe status and safety
 
@@ -43,12 +45,15 @@ To test billing after configuring Supabase and Stripe test mode, set the test pr
 - `/learn` and `/learn/[slug]` short lessons and examples
 - `/challenges` and `/challenges/[slug]` quiz catalog and interactive challenges
 - `/login` sign in and `/register` account creation
-- `/account` saved quiz attempts and subscription status
+- `/account` saved quiz attempts, learning progress, recommendations, and subscription status
+- `/admin` server-guarded database content studio (requires the designated Supabase admin)
 - `/pricing` currently available free features and billing status
-- `/api/quiz-attempts` authenticated quiz-result endpoint
+- `/api/quiz-attempts` server-scored quiz result endpoint; authenticated results are persisted when configured
+- `/api/quiz-feedback` per-question server-side grading and explanations
+- `/api/module-completions` authenticated lesson progress endpoint
 - `/api/stripe/checkout` guarded test-mode checkout endpoint
 - `/api/stripe/webhook` signed Stripe subscription-state updates
 
 ## Vercel deployment
 
-Import the project into Vercel and configure the Supabase public URL and anon key for account features. Add Stripe test secrets only when deliberately validating the guarded test checkout. Deploy and check `/`, `/learn`, `/challenges`, `/login`, `/account`, and `/pricing`. Account storage and Stripe behavior require their services and schema to be configured; do not claim these integrations are live until verified.
+The Next.js project root is the repository root (the directory containing `package.json`). Import that root into Vercel and configure the Supabase URL and anon key plus server-only service-role key for account features. Add Stripe test secrets only when deliberately validating the guarded test checkout. Apply the Supabase schema and designate the admin before testing authenticated features. Deploy and check `/`, `/learn`, `/challenges`, `/login`, `/account`, `/pricing`, and `/admin`. Account storage, CMS, and Stripe behavior require their services and schema to be configured; do not claim these integrations are live until verified.

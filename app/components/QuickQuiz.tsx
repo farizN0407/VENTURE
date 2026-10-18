@@ -10,5 +10,17 @@ const options = [
 
 export default function QuickQuiz() {
   const [selected, setSelected] = useState<number | null>(null);
-  return <div className="question-card"><div className="q-top"><span>FIX THE PROMPT</span><span>SOAL 1 DARI 5</span></div><div className="progress"><i style={{ width: "34%" }} /></div><p className="question">Kamu ingin AI merangkum materi kuliah. Prompt mana yang paling membantu?</p>{options.map((option, index) => <button className={`answer ${selected === index ? "chosen" : ""}`} key={option} onClick={() => setSelected(index)} aria-pressed={selected === index}>{String.fromCharCode(65 + index)}. {option}</button>)}{selected !== null && <div className={`feedback show ${selected === 2 ? "" : "wrong"}`} role="status"><strong>{selected === 2 ? "Jawaban tepat." : "Coba pertimbangkan lagi."}</strong>{selected === 2 ? "Prompt yang efektif menyebutkan konteks, tujuan, audiens, dan format hasil." : "Prompt yang spesifik menyebutkan konteks, tujuan, dan format yang diinginkan."}</div>}</div>;
+  const [feedback, setFeedback] = useState<{ is_correct: boolean; explanation: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  async function pick(index: number) {
+    if (selected !== null) return;
+    setSelected(index); setLoading(true);
+    try {
+      const response = await fetch("/api/quiz-feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenge_slug: "homepage-preview", question_index: 0, option_index: index }) });
+      if (!response.ok) throw new Error("Feedback unavailable");
+      setFeedback(await response.json());
+    } catch { setFeedback({ is_correct: false, explanation: "Feedback tidak dapat dimuat saat ini. Coba challenge lengkap untuk melihat penjelasan." }); }
+    finally { setLoading(false); }
+  }
+  return <div className="question-card"><div className="q-top"><span>FIX THE PROMPT</span><span>SOAL 1 DARI 5</span></div><div className="progress"><i style={{ width: "34%" }} /></div><p className="question">Kamu ingin AI merangkum materi kuliah. Prompt mana yang paling membantu?</p>{options.map((option, index) => <button className={"answer " + (selected === index ? "chosen" : "")} key={option} onClick={() => pick(index)} disabled={selected !== null} aria-pressed={selected === index}>{String.fromCharCode(65 + index)}. {option}</button>)}{loading && <p className="save-status" role="status">Memeriksa jawaban…</p>}{feedback && <div className={"feedback show " + (feedback.is_correct ? "" : "wrong")} role="status"><strong>{feedback.is_correct ? "Jawaban tepat." : "Coba pertimbangkan lagi."}</strong>{feedback.explanation}</div>}</div>;
 }

@@ -94,7 +94,7 @@ try {
         else await page.getByRole("button", { name: /Lihat hasil/ }).click();
       }
       await page.getByRole("heading", { name: "100/100" }).waitFor();
-      await page.getByText("Langkah belajar berikutnya").waitFor();
+      await page.getByText("Materi untuk langkah berikutnya").waitFor();
     }
   });
 
@@ -141,6 +141,13 @@ try {
     await page.locator("#register-password").fill("temporary-test-password");
     await page.getByRole("button", { name: "Buat akun" }).click();
     await page.getByRole("alert").getByText(/Autentikasi belum dikonfigurasi/).waitFor();
+  });
+
+  await check("guest progress endpoint fails closed without an authenticated session", async () => {
+    const response = await page.request.post(`${baseUrl}/api/module-completions`, { data: { module_slug: "prompting" } });
+    assert.ok([401, 503].includes(response.status()), `unexpected status ${response.status()}`);
+    const body = await response.json();
+    assert.match(body.error, /Masuk|Supabase|Penyimpanan/);
   });
 
   await check("desktop and mobile layouts do not overflow horizontally", async () => {

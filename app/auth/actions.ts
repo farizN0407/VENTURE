@@ -18,9 +18,14 @@ export async function signIn(formData: FormData) {
   let supabase;
   try { supabase = await createClient(); } catch { redirect("/login?error=Autentikasi%20belum%20dikonfigurasi."); }
   let error: { message: string } | null;
-  try { ({ error } = await supabase.auth.signInWithPassword({ email, password })); }
+  let userId: string | undefined;
+  try { const result = await supabase.auth.signInWithPassword({ email, password }); error = result.error; userId = result.data.user?.id; }
   catch { redirect("/login?error=Layanan%20autentikasi%20tidak%20dapat%20dihubungi."); }
-  if (error) redirect(`/login?error=${encodeURIComponent(error.message)}`);
+  if (error) redirect("/login?error=Email%20atau%20password%20tidak%20sesuai.");
+  if (userId && (next === "/account" || next === "/")) {
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+    if (profile?.role === "admin") redirect("/admin");
+  }
   redirect(next);
 }
 
@@ -34,7 +39,7 @@ export async function signUp(formData: FormData) {
   let error: { message: string } | null;
   try { ({ data, error } = await supabase.auth.signUp({ email, password })); }
   catch { redirect("/register?error=Layanan%20autentikasi%20tidak%20dapat%20dihubungi."); }
-  if (error) redirect(`/register?error=${encodeURIComponent(error.message)}`);
+  if (error) redirect("/register?error=Akun%20tidak%20dapat%20dibuat.%20Periksa%20data%20dan%20coba%20lagi.");
   if (data.session) redirect("/account");
   redirect("/login?message=Periksa%20email%20untuk%20mengonfirmasi%20akun.");
 }

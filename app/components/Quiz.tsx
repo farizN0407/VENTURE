@@ -1,18 +1,91 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { Challenge } from "@/lib/challenges";
-const lessonBySkill: Record<string, string> = { Prompting: "prompting", "Critical Thinking": "critical-thinking", "Fact Checking": "fact-checking", "AI Knowledge": "critical-thinking", "Practical Application": "responsible-ai" };
-const lessonTitle: Record<string, string> = { prompting: "Prompting", "critical-thinking": "Critical Thinking", "fact-checking": "Fact Checking", "responsible-ai": "Responsible AI" };
-const challengeNextLesson: Record<string, string> = { "prompt-battle": "fact-checking", "fix-the-prompt": "critical-thinking", "can-you-trust-ai": "ai-for-research", "ai-for-research": "critical-thinking", "critical-thinking": "responsible-ai", "responsible-ai": "prompting", "ai-or-human": "responsible-ai", "ai-in-real-life": "responsible-ai" };
-export default function Quiz({challenge}:{challenge:Challenge}){
- const [index,setIndex]=useState(0);const [selected,setSelected]=useState<number|null>(null);const [answers,setAnswers]=useState<number[]>([]);const [done,setDone]=useState(false);
- const [saveStatus,setSaveStatus]=useState<"idle"|"saving"|"saved"|"sign-in"|"error">("idle");const submitted=useRef(false);
- const q=challenge.questions[index];const score=useMemo(()=>answers.reduce((sum,a,i)=>sum+(a===challenge.questions[i]?.correctIndex?1:0),0),[answers,challenge.questions]);
- const recommendations=useMemo(()=>{const missedSkills=answers.flatMap((answer,i)=>answer===challenge.questions[i]?.correctIndex?[]:[challenge.questions[i]?.skill]).filter(Boolean);const slugs=Array.from(new Set(missedSkills.map(skill=>lessonBySkill[skill]??"critical-thinking")));if(!slugs.length)slugs.push(challengeNextLesson[challenge.slug]??"responsible-ai");return slugs.slice(0,2);},[answers,challenge.questions,challenge.slug]);
- useEffect(()=>{if(!done||submitted.current)return;submitted.current=true;setSaveStatus("saving");fetch("/api/quiz-attempts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({challenge_slug:challenge.slug,correct_answers:score,total_questions:challenge.questions.length})}).then(async response=>{if(response.status===401){setSaveStatus("sign-in");return;}if(!response.ok){setSaveStatus("error");return;}setSaveStatus("saved");}).catch(()=>setSaveStatus("error"));},[done,challenge.slug,challenge.questions.length,score]);
- function choose(i:number){if(selected!==null)return;setSelected(i);setAnswers(prev=>[...prev.slice(0,index),i]);}
- function next(){if(index<challenge.questions.length-1){setIndex(index+1);setSelected(null);}else setDone(true);}
- if(done){const finalScore=Math.round((score/challenge.questions.length)*100);return <section className="question-card result-card" style={{maxWidth:680}}><div className="label">Challenge selesai</div><h2 className="result-score">{finalScore}/100</h2><p className="result-copy">Kamu menjawab {score} dari {challenge.questions.length} soal dengan benar. Gunakan penjelasan di setiap soal untuk menentukan apa yang perlu dilatih lagi.</p><div className="result-recommendations"><strong>Langkah belajar berikutnya</strong><ul>{recommendations.map(slug=><li key={slug}><Link href={`/learn/${slug}`}>{lessonTitle[slug]??(slug==="ai-for-research"?"AI for Research":"Materi berikutnya")} →</Link></li>)}</ul></div><p className="save-status" role="status">{saveStatus==="saving"?"Menyimpan hasil ke akun…":saveStatus==="saved"?"Hasil tersimpan di akunmu.":saveStatus==="sign-in"?<>Masuk untuk menyimpan hasil ini ke akun. <Link href="/login?next=%2Faccount">Masuk →</Link></>:saveStatus==="error"?"Hasil belum tersimpan. Kamu tetap bisa melihat skor ini di halaman ini.":""}</p><div className="buttons"><button className="btn btn-main" onClick={()=>{submitted.current=false;setSaveStatus("idle");setIndex(0);setSelected(null);setAnswers([]);setDone(false);}}>Coba lagi</button><Link className="btn btn-alt" href="/challenges">Pilih challenge lain</Link></div><p style={{fontSize:11,color:"#68788c",marginTop:18}}>Skor ini hasil dari challenge ini saja, bukan penilaian ilmiah atau sertifikasi AI literacy.</p></section>}
- return <section className="question-card" style={{maxWidth:680}}><div className="q-top"><span>{challenge.title.toUpperCase()}</span><span>SOAL {index+1} DARI {challenge.questions.length}</span></div><div className="progress"><i style={{width:`${((index+1)/challenge.questions.length)*100}%`}}/></div><p className="question" style={{fontSize:20}}>{q.prompt}</p><div>{q.options.map((opt,i)=>{const isCorrect=i===q.correctIndex;const isChosen=i===selected;let style:React.CSSProperties={};if(selected!==null&&isCorrect)style={borderColor:"#1e9b68",background:"#edf9f4"};else if(isChosen&&!isCorrect)style={borderColor:"#d97706",background:"#fff5e7"};return <button key={opt} className={`answer ${isChosen?"chosen":""}`} style={style} disabled={selected!==null} onClick={()=>choose(i)}>{String.fromCharCode(65+i)}. {opt}</button>})}</div>{selected!==null&&<div className={`feedback show ${selected===q.correctIndex?"":"wrong"}`}><strong>{selected===q.correctIndex?"Jawaban tepat.":"Belum tepat — pelajari alasannya."}</strong>{q.explanation}</div>}{selected!==null&&<button className="btn btn-main quiz-next show" onClick={next}>{index===challenge.questions.length-1?"Lihat hasil":"Soal berikutnya"} →</button>}</section>
+
+type PublicChallenge = {
+  slug: string; title: string; category: string; description: string; difficulty: string;
+  questions: { id?: string; prompt: string; options: string[]; skill: string }[];
+};
+type SkillResult = { skill: string; correct: number; total: number; score: number };
+type QuizResult = { score: number; correct_answers: number; total_questions: number; skill_results: SkillResult[]; saved: boolean; save_reason?: string };
+const lessonBySkill: Record<string, string> = { Prompting:"prompting", "Critical Thinking":"critical-thinking", "Fact Checking":"fact-checking", "AI Knowledge":"critical-thinking", "Practical Application":"responsible-ai" };
+const challengeBySkill: Record<string, string> = { Prompting:"fix-the-prompt", "Critical Thinking":"critical-thinking", "Fact Checking":"can-you-trust-ai", "AI Knowledge":"ai-or-human", "Practical Application":"responsible-ai" };
+const lessonTitle: Record<string, string> = { prompting:"Prompting", "critical-thinking":"Critical Thinking", "fact-checking":"Fact Checking", "responsible-ai":"Responsible AI", "ai-for-research":"AI for Research" };
+const challengeTitle: Record<string, string> = { "fix-the-prompt":"Fix the Prompt", "critical-thinking":"Think Critically with AI", "can-you-trust-ai":"Can You Trust AI?", "ai-or-human":"AI or Human?", "responsible-ai":"Use AI Responsibly" };
+
+export default function Quiz({ challenge }: { challenge: PublicChallenge }) {
+  const [index, setIndex] = useState(0);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [answers, setAnswers] = useState<number[]>([]);
+  const [done, setDone] = useState(false);
+  const [feedback, setFeedback] = useState<{ is_correct: boolean; explanation: string } | null>(null);
+  const [feedbackState, setFeedbackState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [result, setResult] = useState<QuizResult | null>(null);
+  const [resultState, setResultState] = useState<"idle" | "loading" | "error">("idle");
+  const question = challenge.questions[index];
+
+  const recommendations = useMemo(() => {
+    if (!result) return { lessonSlugs: [] as string[], challengeSlugs: [] as string[] };
+    const weakSkills = result.skill_results.filter((skill) => skill.score < 100).sort((a, b) => a.score - b.score).map((skill) => skill.skill);
+    const skills = weakSkills.length ? weakSkills : ["Prompting"];
+    const lessonSlugs = [...new Set(skills.map((skill) => lessonBySkill[skill] ?? "responsible-ai"))].slice(0, 2);
+    const challengeSlugs = [...new Set(skills.map((skill) => challengeBySkill[skill] ?? "responsible-ai"))].filter((slug) => slug !== challenge.slug).slice(0, 2);
+    return { lessonSlugs, challengeSlugs };
+  }, [result, challenge.slug]);
+
+  useEffect(() => {
+    if (!done || result || resultState === "loading") return;
+    setResultState("loading");
+    fetch("/api/quiz-attempts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenge_slug: challenge.slug, answers }) })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? "Hasil quiz tidak dapat dihitung.");
+        setResult(data as QuizResult);
+      })
+      .catch(() => setResultState("error"));
+  }, [done, result, resultState, challenge.slug, answers]);
+
+  async function choose(optionIndex: number) {
+    if (selected !== null) return;
+    setSelected(optionIndex);
+    setAnswers((previous) => [...previous.slice(0, index), optionIndex]);
+    setFeedbackState("loading");
+    try {
+      const response = await fetch("/api/quiz-feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenge_slug: challenge.slug, question_index: index, option_index: optionIndex, question_id: question.id }) });
+      if (!response.ok) throw new Error("Feedback unavailable");
+      setFeedback(await response.json());
+      setFeedbackState("ready");
+    } catch { setFeedbackState("error"); }
+  }
+
+  function retry() {
+    setIndex(0); setSelected(null); setAnswers([]); setDone(false); setFeedback(null); setFeedbackState("idle"); setResult(null); setResultState("idle");
+  }
+
+  if (done) {
+    if (resultState === "error") return <section className="question-card result-card" role="alert"><h2 className="auth-heading">Hasil belum dapat dihitung</h2><p className="result-copy">Periksa koneksi lalu coba lagi. Jawaban quiz belum dinilai.</p><button className="btn btn-main" type="button" onClick={() => setResultState("idle")}>Coba lagi</button></section>;
+    if (!result) return <section className="question-card result-card" role="status"><div className="label">Challenge selesai</div><h2 className="auth-heading">Menghitung hasil…</h2><p className="result-copy">Jawaban sedang dinilai oleh server.</p></section>;
+    return <section className="question-card result-card" style={{ maxWidth: 680 }}>
+      <div className="label">Challenge selesai</div><h2 className="result-score">{result.score}/100</h2>
+      <p className="result-copy">Kamu menjawab {result.correct_answers} dari {result.total_questions} soal dengan benar. Skor dihitung di server dari jawaban yang kamu pilih.</p>
+      <p className="save-status" role="status">{result.saved ? "Hasil tersimpan di akunmu." : result.save_reason === "storage_unavailable" ? "Skor dihitung, tetapi penyimpanan akun belum dikonfigurasi." : <>Skor guest hanya berlaku untuk sesi ini dan tidak tersimpan. <Link href="/login?next=%2Faccount">Masuk untuk menyimpan quiz berikutnya →</Link></>}</p>
+      <div className="result-recommendations"><strong>Materi untuk langkah berikutnya</strong><ul>{recommendations.lessonSlugs.map((slug) => <li key={slug}><Link href={`/learn/${slug}`}>{lessonTitle[slug] ?? slug} →</Link></li>)}</ul></div>
+      <div className="result-recommendations"><strong>Challenge yang direkomendasikan</strong><ul>{recommendations.challengeSlugs.map((slug) => <li key={slug}><Link href={`/challenges/${slug}`}>{challengeTitle[slug] ?? slug} →</Link></li>)}</ul></div>
+      <div className="buttons"><button className="btn btn-main" type="button" onClick={retry}>Coba lagi</button><Link className="btn btn-alt" href="/challenges">Pilih challenge lain</Link></div>
+      <p style={{ fontSize: 11, color: "#68788c", marginTop: 18 }}>Skor ini hasil dari challenge ini saja, bukan penilaian ilmiah atau sertifikasi AI literacy.</p>
+    </section>;
+  }
+
+  if (!question) return <section className="question-card" role="alert">Challenge ini belum memiliki soal yang dapat ditampilkan.</section>;
+  return <section className="question-card" style={{ maxWidth: 680 }}>
+    <div className="q-top"><span>{challenge.title.toUpperCase()}</span><span>SOAL {index + 1} DARI {challenge.questions.length}</span></div>
+    <div className="progress"><i style={{ width: `${((index + 1) / challenge.questions.length) * 100}%` }} /></div>
+    <p className="question" style={{ fontSize: 20 }}>{question.prompt}</p>
+    <div>{question.options.map((option, optionIndex) => <button key={`${optionIndex}-${option}`} className={`answer ${selected === optionIndex ? "chosen" : ""}`} disabled={selected !== null} onClick={() => choose(optionIndex)}>{String.fromCharCode(65 + optionIndex)}. {option}</button>)}</div>
+    {feedbackState === "loading" && <p className="save-status" role="status">Memeriksa jawaban…</p>}
+    {feedbackState === "ready" && feedback && <div className={`feedback show ${feedback.is_correct ? "" : "wrong"}`}><strong>{feedback.is_correct ? "Jawaban tepat." : "Belum tepat — pelajari alasannya."}</strong>{feedback.explanation}</div>}
+    {feedbackState === "error" && <p className="auth-message auth-error" role="alert">Feedback tidak dapat dimuat. Jawabanmu tetap tercatat untuk perhitungan hasil.</p>}
+    {selected !== null && feedbackState !== "loading" && <button className="btn btn-main quiz-next show" onClick={() => { if (index < challenge.questions.length - 1) { setIndex(index + 1); setSelected(null); setFeedback(null); setFeedbackState("idle"); } else setDone(true); }}>{index === challenge.questions.length - 1 ? "Lihat hasil" : "Soal berikutnya"} →</button>}
+  </section>;
 }
