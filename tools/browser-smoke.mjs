@@ -39,6 +39,12 @@ try {
     const fonts = await page.evaluate(async () => { await document.fonts.ready; return { dmSans: document.fonts.check("400 16px 'DM Sans'"), spaceGrotesk: document.fonts.check("700 24px 'Space Grotesk'") }; });
     assert.equal(fonts.dmSans, true);
     assert.equal(fonts.spaceGrotesk, true);
+    await page.getByRole("heading", { name: "Learn → Play → Improve" }).waitFor();
+    await page.getByRole("heading", { name: "Belajar memakai AI dengan lebih sadar." }).waitFor();
+    await page.locator("#how-it-works a[href='/learn']").first().waitFor();
+    await page.locator("#how-it-works a[href='/challenges']").first().waitFor();
+    await page.locator("nav a[href='/login']").waitFor();
+    await page.locator("footer a[href='#about']").waitFor();
   });
 
   await check("landing quick quiz gives correct-answer feedback", async () => {
@@ -102,11 +108,39 @@ try {
     assert.equal(await page.locator("#pricing button.btn-disabled").isDisabled(), true);
   });
 
-  await check("account and login explain unconfigured Supabase without fake data", async () => {
+  await check("login and registration forms validate input and preserve guest access", async () => {
+    await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: "Masuk ke Promptly" }).waitFor();
+    const loginForm = page.locator("form.auth-form");
+    assert.equal(await loginForm.locator("input[type=email]").evaluate((input) => input.required), true);
+    assert.equal(await loginForm.locator("input[type=password]").evaluate((input) => input.required), true);
+    assert.equal(await loginForm.locator("input[type=password]").getAttribute("minlength"), "8");
+    await loginForm.locator("button[type=submit]").click();
+    assert.equal(new URL(page.url()).pathname, "/login", "empty login should be blocked by native validation");
+    await page.getByRole("link", { name: "Daftar di sini" }).click();
+    await page.waitForURL("**/register");
+    await page.getByRole("heading", { name: "Buat akun Promptly" }).waitFor();
+    await page.getByRole("link", { name: "Lanjut sebagai tamu" }).click();
+    await page.waitForURL("**/challenges");
+  });
+
+  await check("account and authentication status explain unconfigured Supabase without fake data", async () => {
     await page.goto(`${baseUrl}/account`, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Akun belum tersambung" }).waitFor();
     await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "Masuk atau daftar" }).waitFor();
+    await page.getByRole("heading", { name: "Masuk ke Promptly" }).waitFor();
+    const email = page.locator("#login-email");
+    const password = page.locator("#login-password");
+    await email.fill("student@example.com");
+    await password.fill("temporary-test-password");
+    await page.getByRole("button", { name: "Masuk" }).click();
+    await page.getByRole("alert").getByText(/Autentikasi belum dikonfigurasi/).waitFor();
+    await page.goto(`${baseUrl}/register`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: "Buat akun Promptly" }).waitFor();
+    await page.locator("#register-email").fill("student@example.com");
+    await page.locator("#register-password").fill("temporary-test-password");
+    await page.getByRole("button", { name: "Buat akun" }).click();
+    await page.getByRole("alert").getByText(/Autentikasi belum dikonfigurasi/).waitFor();
   });
 
   await check("desktop and mobile layouts do not overflow horizontally", async () => {

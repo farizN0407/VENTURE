@@ -1,7 +1,6 @@
-import Link from "next/link";
-import { signIn, signUp } from "@/app/auth/actions";
+import AuthForm from "@/app/components/AuthForm";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; next?: string }> }) {
   const query = await searchParams;
-  return <main className="wrap section"><Link className="brand" href="/">promptly<b>.</b></Link><div className="auth-card question-card"><div className="label">AKUN PROMPTLY</div><h1 className="auth-heading">Masuk atau daftar</h1><p className="auth-copy">Akun Supabase menyimpan hasil quiz milikmu. Hasil tetap bisa dilihat tanpa masuk, tetapi tidak disimpan ke akun.</p>{query.error && <p className="auth-message auth-error" role="alert">{query.error}</p>}{query.message && <p className="auth-message" role="status">{query.message}</p>}<form action={signIn} className="auth-form"><input type="hidden" name="next" value={query.next ?? "/account"}/><label>Email<input type="email" name="email" autoComplete="email" required/></label><label>Password<input type="password" name="password" autoComplete="current-password" required minLength={8}/></label><button className="btn btn-main" type="submit">Masuk</button></form><div className="auth-divider">Belum punya akun?</div><form action={signUp} className="auth-form"><label>Email<input type="email" name="email" autoComplete="email" required/></label><label>Password<input type="password" name="password" autoComplete="new-password" required minLength={8}/></label><button className="btn btn-alt" type="submit">Daftar akun</button></form><p className="auth-footnote">Pendaftaran memakai konfirmasi email jika fitur tersebut diaktifkan di project Supabase.</p></div></main>;
+  return <AuthForm mode="login" error={query.error} message={query.message} next={query.next ?? "/account"} />;
 }

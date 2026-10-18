@@ -42,7 +42,7 @@ To test billing after configuring Supabase and Stripe test mode, set the test pr
 - `/` landing page
 - `/learn` and `/learn/[slug]` short lessons and examples
 - `/challenges` and `/challenges/[slug]` quiz catalog and interactive challenges
-- `/login` sign in and registration
+- `/login` sign in and `/register` account creation
 - `/account` saved quiz attempts and subscription status
 - `/pricing` currently available free features and billing status
 - `/api/quiz-attempts` authenticated quiz-result endpoint
