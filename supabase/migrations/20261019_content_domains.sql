@@ -60,7 +60,7 @@ declare
 begin
   if not public.is_promptly_admin() then raise exception 'Admin access required.'; end if;
   if v_content_domain is null or v_content_domain not in ('ai_literacy','cybersecurity') then raise exception 'A valid content domain is required.'; end if;
-  if nullif(p_payload->>'module_slug','') is not null and not exists (select 1 from public.learning_modules m where m.slug=p_payload->>'module_slug' and m.content_domain=v_content_domain) then raise exception 'Related module must exist in the same content domain.'; end if;
+  if nullif(p_payload->>'module_slug','') is not null and not exists (select 1 from public.learning_modules m where m.slug=p_payload->>'module_slug' and (m.content_domain=v_content_domain or m.content_domain='unclassified')) then raise exception 'Related module must exist in the same content domain or be unclassified.'; end if;
   if v_slug is null or v_slug !~ '^custom-[a-z0-9]+(-[a-z0-9]+)*$' then raise exception 'Custom challenge slugs must start with custom-.'; end if;
   if jsonb_typeof(p_payload->'questions') is distinct from 'array' then raise exception 'Questions must be an array.'; end if;
   if jsonb_array_length(p_payload->'questions') not between 1 and 50 then raise exception 'Add between 1 and 50 questions.'; end if;

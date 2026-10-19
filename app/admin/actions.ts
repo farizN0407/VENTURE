@@ -61,7 +61,7 @@ export async function saveModule(form: FormData) {
     if (!slug) continue;
     const table = relation === "challenge" ? "challenges" : "learning_modules";
     const { data: related, error: relationError } = await supabase.from(table).select("content_domain").eq("slug", slug).maybeSingle();
-    if (relationError || !related || related.content_domain !== row.content_domain) backWithError(`Slug ${relation} harus ada dan menggunakan domain konten yang sama.`);
+    if (relationError || !related || (related.content_domain !== row.content_domain && related.content_domain !== "unclassified")) backWithError(`Slug ${relation} harus ada dan menggunakan domain konten yang sama atau belum diklasifikasikan.`);
   }
   const { error } = await supabase.from("learning_modules").upsert(row, { onConflict: "slug" });
   if (error) backWithError("Materi gagal disimpan. Periksa slug, database, dan kebijakan admin.");
@@ -90,7 +90,7 @@ export async function saveChallenge(form: FormData) {
   if (!slugPattern.test(slug) || !contentDomains.has(contentDomain) || !title || !category || !description || !learningObjective || !["Pemula", "Menengah", "Lanjutan"].includes(difficulty)) backWithError("Data challenge tidak valid atau belum lengkap. Pilih domain AI Literacy atau Cybersecurity.");
   if (moduleSlug) {
     const { data: relatedModule, error: moduleError } = await supabase.from("learning_modules").select("content_domain").eq("slug", moduleSlug).maybeSingle();
-    if (moduleError || !relatedModule || relatedModule.content_domain !== contentDomain) backWithError("Slug materi terkait harus ada dan menggunakan domain konten yang sama.");
+    if (moduleError || !relatedModule || (relatedModule.content_domain !== contentDomain && relatedModule.content_domain !== "unclassified")) backWithError("Slug materi terkait harus ada dan menggunakan domain konten yang sama atau belum diklasifikasikan.");
   }
   // Do not use field(): its length cap slices strings, which can silently turn
   // otherwise valid JSON into a truncated document before JSON.parse sees it.
