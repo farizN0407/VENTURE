@@ -346,6 +346,8 @@ drop policy if exists "Users can read own attempts" on public.quiz_attempts;
 drop policy if exists "Users can insert own attempts" on public.quiz_attempts;
 drop policy if exists "Users can read own subscription" on public.subscriptions;
 drop policy if exists "Users can read own completions" on public.module_completions;
+drop policy if exists "Users can insert own completions" on public.module_completions;
+drop policy if exists "Users can update own completions" on public.module_completions;
 drop policy if exists "Users can read public or admin modules" on public.learning_modules;
 drop policy if exists "Admins manage modules" on public.learning_modules;
 drop policy if exists "Users can read public or admin challenges" on public.challenges;
@@ -369,15 +371,18 @@ create policy "Users can read options from published challenges" on public.chall
 create policy "Admins manage answer keys" on public.quiz_answer_keys for all to authenticated using (public.is_promptly_admin()) with check (public.is_promptly_admin());
 create policy "Users can read own attempts" on public.quiz_attempts for select to authenticated using (auth.uid()=user_id or public.is_promptly_admin());
 create policy "Users can read own completions" on public.module_completions for select to authenticated using (auth.uid()=user_id or public.is_promptly_admin());
+create policy "Users can insert own completions" on public.module_completions for insert to authenticated with check (auth.uid()=user_id);
+create policy "Users can update own completions" on public.module_completions for update to authenticated using (auth.uid()=user_id) with check (auth.uid()=user_id);
 create policy "Users can read own subscription" on public.subscriptions for select to authenticated using (auth.uid()=user_id or public.is_promptly_admin());
 
 revoke all on public.profiles,public.quiz_attempts,public.module_completions,public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys,public.subscriptions from anon,authenticated;
 grant select on public.profiles,public.quiz_attempts,public.module_completions,public.subscriptions to authenticated;
+grant insert (user_id,module_slug),update (user_id,module_slug) on public.module_completions to authenticated;
 grant update (display_name) on public.profiles to authenticated;
 grant select on public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options to anon,authenticated;
 grant select,insert,update,delete on public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys to authenticated;
 grant all on public.profiles,public.quiz_attempts,public.module_completions,public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys,public.subscriptions to service_role;
 grant usage,select on sequence public.quiz_attempts_id_seq to service_role;
 
--- No client may insert its own scores or completion rows. Scoring RPCs derive
--- scores from private answer keys; authenticated server routes write modules.
+-- Clients cannot write quiz scores; scoring RPCs derive scores from private
+-- answer keys. Module completion writes are allowed only through owner-scoped RLS.
