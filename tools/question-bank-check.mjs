@@ -95,5 +95,18 @@ assert.equal(updatedProfile.skills.find((skill) => skill.name === "Critical Thin
 
 const schema = fs.readFileSync(path.join(root, "supabase/schema.sql"), "utf8");
 assert.match(schema, /quiz_attempts_user_attempt_id[\s\S]+?where attempt_id is not null/i, "completed user attempts are idempotent by unique user and attempt id");
+assert.match(schema, /profiles_only_one_admin[\s\S]+?where role = 'admin'/i, "the schema permits only one designated admin");
+assert.match(schema, /alter table public\.profiles enable row level security/i, "profile rows are protected by RLS");
+assert.match(schema, /create policy "Users can read own attempts"[\s\S]+?auth\.uid\(\)=user_id/i, "attempt history is scoped to the current user");
+assert.match(schema, /grant update \(display_name\) on public\.profiles to authenticated/i, "users cannot update their role column");
+assert.match(schema, /grant all on public\.profiles[\s\S]+?to service_role/i, "only the trusted server role receives elevated table privileges");
+assert.match(schema, /revoke all on public\.profiles[\s\S]+?from anon,authenticated/i, "public and signed-in clients cannot write protected progress rows directly");
+assert.match(schema, /revoke all on function public\.grade_quiz_question\(text,integer,integer\) from public,anon,authenticated,service_role/i, "legacy per-option grading RPC cannot reveal answers by repeated probing");
+assert.match(schema, /submit_quiz_attempt\(p_challenge_slug text,p_answers jsonb,p_attempt_id uuid\)/i, "database submissions require a unique attempt id");
+assert.match(schema, /'selected_answer',v_selected_answer,'correct_answer',v_row\.correct_answer,'explanation',v_row\.explanation/i, "database result provides answer review only after full submission");
+assert.match(schema, /on conflict \(user_id,attempt_id\) where attempt_id is not null do nothing/i, "database quiz retry submissions do not duplicate account history");
+assert.match(schema, /conname = 'profiles_role_check' and conrelid = 'public\.profiles'::regclass/i, "role constraint lookup is scoped to the intended table");
+assert.match(schema, /::numeric <> trunc\(/i, "quiz answer indexes must be whole numbers");
+assert.match(schema, /last_event_created < excluded\.last_event_created/i, "duplicate and older subscription events cannot overwrite newer state");
 
 console.log(`PASS ${topicSlugs.length} topics, ${allIds.size} unique questions, randomized scoring, five-question selection, repeat avoidance, and zero-start profile checks`);

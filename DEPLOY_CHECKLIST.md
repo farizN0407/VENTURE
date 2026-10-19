@@ -7,14 +7,15 @@
 
 ## Supabase accounts and quiz history
 - [ ] Create a Supabase project and run `supabase/schema.sql`.
-- [ ] Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in the Vercel project.
+- [ ] Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in the Vercel project (the legacy anon key is supported as a fallback).
+- [ ] Set `SUPABASE_SECRET_KEY` server-only for result/progress writes (legacy service-role key is supported as a fallback). Never use an elevated key with a `NEXT_PUBLIC_` prefix.
+- [ ] Set `NEXT_PUBLIC_SITE_URL` to the production HTTPS origin and configure its `/auth/callback` URL in Supabase Auth.
 - [ ] Configure email confirmation and production redirect URLs in Supabase Auth.
-- [ ] Keep `SUPABASE_SERVICE_ROLE_KEY` server-only. It is required only for guarded billing synchronization.
 - [ ] Verify signup, confirmation, login, result saving, and account history with a test account.
 
 ## Stripe
 - [ ] Current checkout is disabled in the UI; all included content is free and no Pro-only feature is active.
-- [ ] For an optional test-only checkout verification, configure a Stripe test key, test price, webhook signing secret, Supabase service-role key, and `STRIPE_ENABLE_CHECKOUT=true`.
+- [ ] For an optional test-only checkout verification, configure a Stripe test key, test price, webhook signing secret, Supabase server-only secret key, and `STRIPE_ENABLE_CHECKOUT=true`.
 - [ ] The checkout handler rejects live Stripe keys. Do not weaken this guard or advertise paid access.
 - [ ] Point the test webhook at `/api/stripe/webhook`, enable checkout and subscription created/updated/deleted events, and verify persistence in Supabase.
 - [ ] Do not accept live payments until a real Pro feature, server-side entitlement checks, webhook persistence, failure handling, and cancellation behavior have been implemented and reviewed.

@@ -10,7 +10,10 @@ create table if not exists public.profiles (
 );
 alter table public.profiles add column if not exists role text not null default 'user';
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'profiles_role_check') then
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_role_check' and conrelid = 'public.profiles'::regclass
+  ) then
     alter table public.profiles add constraint profiles_role_check check (role in ('user', 'admin'));
   end if;
 end $$;
@@ -162,7 +165,7 @@ begin
   on conflict (user_id) do update set stripe_customer_id=excluded.stripe_customer_id,
     stripe_subscription_id=excluded.stripe_subscription_id,status=excluded.status,
     current_period_end=excluded.current_period_end,last_event_created=excluded.last_event_created,updated_at=now()
-  where public.subscriptions.last_event_created <= excluded.last_event_created;
+    where public.subscriptions.last_event_created < excluded.last_event_created;
 end;
 $$;
 revoke all on function public.sync_stripe_subscription_event(uuid,text,text,text,timestamptz,bigint) from public,anon,authenticated;
@@ -231,10 +234,12 @@ begin
   return v_result;
 end;
 $$;
-revoke all on function public.grade_quiz_question(text,integer,integer) from public;
-grant execute on function public.grade_quiz_question(text,integer,integer) to anon,authenticated;
+-- Per-question grading exposes answer keys through repeated option probing.
+-- Keep the legacy RPC unavailable; results are only returned by full submission.
+revoke all on function public.grade_quiz_question(text,integer,integer) from public,anon,authenticated,service_role;
 
-create or replace function public.submit_quiz_attempt(p_challenge_slug text,p_answers jsonb)
+drop function if exists public.submit_quiz_attempt(text,jsonb);
+create or replace function public.submit_quiz_attempt(p_challenge_slug text,p_answers jsonb,p_attempt_id uuid)
 returns jsonb language plpgsql security definer
 set search_path = pg_catalog, public
 as $$
@@ -244,18 +249,22 @@ declare
   v_correct integer := 0;
   v_position integer := 0;
   v_selected integer;
+  v_selected_answer text;
   v_row record;
   v_details jsonb := '[]'::jsonb;
   v_skills jsonb;
   v_score integer;
   v_saved boolean := false;
+  v_existing record;
 begin
   if p_answers is null or jsonb_typeof(p_answers) is distinct from 'array' then raise exception 'Answers must be an array.'; end if;
+  if p_attempt_id is null then raise exception 'Attempt id is required.'; end if;
   select count(*) into v_total from public.challenge_questions q join public.challenges c on c.slug=q.challenge_slug
   where c.slug=p_challenge_slug and (c.published or public.is_promptly_admin());
   if v_total < 1 or jsonb_array_length(p_answers) <> v_total then raise exception 'Quiz answer count is invalid.'; end if;
   for v_row in
-    select q.position,q.skill,o.position as correct_position
+    select q.id,q.position,q.prompt,q.skill,o.position as correct_position,o.body as correct_answer,ak.explanation,
+      (select count(*) from public.challenge_options options where options.question_id=q.id) as option_count
     from public.challenge_questions q join public.challenges c on c.slug=q.challenge_slug
     join public.quiz_answer_keys ak on ak.question_id=q.id
     join public.challenge_options o on o.id=ak.correct_option_id
@@ -263,24 +272,37 @@ begin
   loop
     v_position := v_position+1;
     if jsonb_typeof(p_answers->(v_position-1)) is distinct from 'number' then raise exception 'An answer is invalid.'; end if;
+    if (p_answers->>(v_position-1))::numeric <> trunc((p_answers->>(v_position-1))::numeric) then raise exception 'An answer position must be a whole number.'; end if;
     v_selected := (p_answers->>(v_position-1))::integer+1;
-    if v_selected < 1 or v_selected > 10 then raise exception 'An answer option is invalid.'; end if;
+    if v_selected < 1 or v_selected > v_row.option_count then raise exception 'An answer option is invalid.'; end if;
+    select body into v_selected_answer from public.challenge_options where question_id=v_row.id and position=v_selected;
     if v_selected=v_row.correct_position then v_correct:=v_correct+1; end if;
-    v_details := v_details || jsonb_build_array(jsonb_build_object('question',v_position,'skill',v_row.skill,'is_correct',(v_selected=v_row.correct_position)));
+    v_details := v_details || jsonb_build_array(jsonb_build_object('question',v_position,'prompt',v_row.prompt,'skill',v_row.skill,
+      'is_correct',(v_selected=v_row.correct_position),'selected_answer',v_selected_answer,'correct_answer',v_row.correct_answer,'explanation',v_row.explanation));
   end loop;
   v_score := round(v_correct*100.0/v_total);
   select coalesce(jsonb_agg(jsonb_build_object('skill',skill,'correct',correct,'total',total,'score',round(correct*100.0/total)) order by skill),'[]'::jsonb)
   into v_skills from (select x->>'skill' as skill,count(*) filter (where (x->>'is_correct')::boolean) as correct,count(*) as total from jsonb_array_elements(v_details) x group by x->>'skill') s;
   if v_user_id is not null then
-    insert into public.quiz_attempts (user_id,challenge_slug,score,correct_answers,total_questions,skill_results,answer_details)
-    values (v_user_id,p_challenge_slug,v_score,v_correct,v_total,v_skills,v_details);
-    v_saved:=true;
+    insert into public.quiz_attempts (user_id,challenge_slug,attempt_id,score,correct_answers,total_questions,skill_results,answer_details)
+    values (v_user_id,p_challenge_slug,p_attempt_id,v_score,v_correct,v_total,v_skills,v_details)
+    on conflict (user_id,attempt_id) where attempt_id is not null do nothing;
+    if found then
+      v_saved:=true;
+    else
+      select score,correct_answers,total_questions,skill_results,answer_details into v_existing
+      from public.quiz_attempts where user_id=v_user_id and attempt_id=p_attempt_id;
+      if found then
+        v_score:=v_existing.score; v_correct:=v_existing.correct_answers; v_total:=v_existing.total_questions;
+        v_skills:=v_existing.skill_results; v_details:=v_existing.answer_details; v_saved:=true;
+      end if;
+    end if;
   end if;
-  return jsonb_build_object('score',v_score,'correct_answers',v_correct,'total_questions',v_total,'skill_results',v_skills,'saved',v_saved);
+  return jsonb_build_object('score',v_score,'correct_answers',v_correct,'total_questions',v_total,'skill_results',v_skills,'review',v_details,'saved',v_saved);
 end;
 $$;
-revoke all on function public.submit_quiz_attempt(text,jsonb) from public;
-grant execute on function public.submit_quiz_attempt(text,jsonb) to anon,authenticated;
+revoke all on function public.submit_quiz_attempt(text,jsonb,uuid) from public,anon,authenticated,service_role;
+grant execute on function public.submit_quiz_attempt(text,jsonb,uuid) to anon,authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.quiz_attempts enable row level security;
@@ -329,6 +351,7 @@ grant select on public.profiles,public.quiz_attempts,public.module_completions,p
 grant update (display_name) on public.profiles to authenticated;
 grant select on public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options to anon,authenticated;
 grant select,insert,update,delete on public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys to authenticated;
+grant all on public.profiles,public.quiz_attempts,public.module_completions,public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys,public.subscriptions to service_role;
 grant usage,select on sequence public.quiz_attempts_id_seq to service_role;
 
 -- No client may insert its own scores or completion rows. Scoring RPCs derive

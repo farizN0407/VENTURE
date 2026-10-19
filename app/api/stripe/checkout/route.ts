@@ -13,7 +13,8 @@ export async function POST(request: Request) {
   const secret = process.env.STRIPE_SECRET_KEY;
   const price = process.env.STRIPE_PRO_PRICE_ID;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (process.env.STRIPE_ENABLE_CHECKOUT !== "true" || !secret?.startsWith("sk_test_") || !price || !webhookSecret || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  const hasSupabaseSecret = Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
+  if (process.env.STRIPE_ENABLE_CHECKOUT !== "true" || !secret?.startsWith("sk_test_") || !price || !webhookSecret || !hasSupabaseSecret) {
     return NextResponse.redirect(new URL("/pricing?checkout=unavailable", origin), 303);
   }
   const stripe = new Stripe(secret);

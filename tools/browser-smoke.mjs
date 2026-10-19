@@ -152,6 +152,14 @@ try {
     await page.waitForURL("**/challenges");
   });
 
+  await check("auth confirmation callback handles a missing code safely", async () => {
+    const response = await page.request.get(`${baseUrl}/auth/callback?next=%2F%2Fevil.example`, { maxRedirects: 0 });
+    assert.equal(response.status(), 307);
+    const destination = new URL(response.headers().location);
+    assert.equal(destination.pathname, "/login");
+    assert.match(destination.searchParams.get("error") ?? "", /Konfirmasi email gagal/);
+  });
+
   await check("account and authentication status explain unconfigured Supabase without fake data", async () => {
     await page.goto(`${baseUrl}/account`, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Akun belum tersambung" }).waitFor();
@@ -178,6 +186,8 @@ try {
     assert.match(body.error, /Masuk|Supabase|Penyimpanan/);
     const earlyFeedback = await page.request.post(`${baseUrl}/api/quiz-feedback`, { data: { challenge_slug: "prompt-battle", question_index: 0, option_index: 0 } });
     assert.equal(earlyFeedback.status(), 409, "built-in topic quizzes cannot reveal per-answer correctness before completion");
+    const customEarlyFeedback = await page.request.post(`${baseUrl}/api/quiz-feedback`, { data: { challenge_slug: "custom-practice", question_index: 0, option_index: 0, question_id: "b9bc53bb-06ba-47ea-912a-44f13cc8f971" } });
+    assert.equal(customEarlyFeedback.status(), 409, "database challenges cannot reveal per-answer correctness before completion");
   });
 
   await check("desktop and mobile layouts do not overflow horizontally", async () => {

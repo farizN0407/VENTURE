@@ -16,7 +16,7 @@ export default function AuthForm({
   mode,
   error,
   message,
-  next = "/account",
+  next = "/",
 }: {
   mode: "login" | "register";
   error?: string;
@@ -35,7 +35,7 @@ export default function AuthForm({
       {error && <p className="auth-message auth-error" role="alert">{error}</p>}
       {message && <p className="auth-message" role="status">{message}</p>}
       <form action={isLogin ? signIn : signUp} className="auth-form">
-        {isLogin && <input type="hidden" name="next" value={next} />}
+        <input type="hidden" name="next" value={next} />
         <label htmlFor={`${mode}-email`}>Email
           <input id={`${mode}-email`} type="email" name="email" autoComplete="email" required maxLength={254} />
         </label>
@@ -46,7 +46,7 @@ export default function AuthForm({
         <SubmitButton mode={mode} />
       </form>
       <p className="auth-footnote">{isLogin ? "Belum punya akun?" : "Sudah punya akun?"} {" "}
-        <Link className="auth-switch" href={isLogin ? "/register" : "/login"}>{isLogin ? "Daftar di sini" : "Masuk di sini"}</Link>
+        <Link className="auth-switch" href={isLogin ? `/register?next=${encodeURIComponent(next)}` : `/login?next=${encodeURIComponent(next)}`}>{isLogin ? "Daftar di sini" : "Masuk di sini"}</Link>
       </p>
       <div className="auth-divider">atau</div>
       <Link className="btn btn-alt auth-guest" href="/challenges">Lanjut sebagai tamu</Link>

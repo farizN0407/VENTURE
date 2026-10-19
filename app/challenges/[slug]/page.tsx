@@ -6,13 +6,19 @@ import Quiz from "@/app/components/Quiz";
 import TopicQuiz from "@/app/components/TopicQuiz";
 import { CHALLENGE_TOPICS } from "@/lib/topic-quizzes";
 export function generateStaticParams(){return challenges.map(c=>({slug:c.slug}));}
+export const dynamicParams = true;
+export const dynamic = "force-dynamic";
 function publicStaticChallenge(challenge: typeof challenges[number]): PublicChallenge {
   return { slug: challenge.slug, title: challenge.title, category: challenge.category, description: challenge.description, difficulty: challenge.difficulty,
     questions: challenge.questions.map(({ prompt, options, skill }) => ({ prompt, options, skill })) };
 }
 export default async function ChallengePage({params}:{params:Promise<{slug:string}>}){
   const {slug}=await params;
-  const databaseChallenge = await getPublishedChallenge(slug);
+  let databaseChallenge: PublicChallenge | undefined;
+  try { databaseChallenge = await getPublishedChallenge(slug); }
+  catch {
+    if (!challenges.some((challenge) => challenge.slug === slug)) return <main className="wrap section"><Link className="brand" href="/">promptly<b>.</b></Link><section className="account-panel"><div className="label">CHALLENGE</div><h1 className="page-heading">Challenge belum dapat dimuat</h1><p>Supabase belum dapat mengonfirmasi challenge published ini. Periksa koneksi, izin SELECT, dan RLS, lalu coba lagi.</p><Link className="btn btn-alt" href="/challenges">Kembali ke semua challenge</Link></section></main>;
+  }
   const staticChallenge = challenges.find(c=>c.slug===slug);
   if(!databaseChallenge && !staticChallenge)notFound();
   const challenge = databaseChallenge ?? publicStaticChallenge(staticChallenge!);

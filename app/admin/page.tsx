@@ -53,8 +53,8 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     </section>
     <section className="admin-section"><div className="head"><div><div className="label">CHALLENGES & QUIZZES</div><h2>Challenge</h2><p>Kelola soal, opsi, kunci jawaban, pembahasan, kategori, dan tingkat kesulitan.</p></div></div>
       <p className="admin-help">Slug konten database menggunakan awalan <code>custom-</code> agar tidak bertabrakan dengan 7 materi dan 8 challenge bawaan Promptly.</p>
-      <details className="admin-editor" open><summary>Tambah challenge</summary><ChallengeForm action={saveChallenge}/></details>
-      {managedChallenges.map((challenge) => <details className="admin-editor" key={challenge.slug}><summary><span>{challenge.title}</span><small>{challenge.published ? "Terbit" : "Draft"} · {challenge.slug}</small></summary><ChallengeForm action={saveChallenge} challenge={challenge} /><form action={deleteChallenge} className="admin-delete"><input type="hidden" name="slug" value={challenge.slug}/><button className="text-button" type="submit">Hapus challenge</button></form></details>)}
+      <details className="admin-editor" open><summary>Tambah challenge</summary><ChallengeForm /></details>
+      {managedChallenges.map((challenge) => <details className="admin-editor" key={challenge.slug}><summary><span>{challenge.title}</span><small>{challenge.published ? "Terbit" : "Draft"} · {challenge.slug}</small></summary><ChallengeForm challenge={challenge} /><form action={deleteChallenge} className="admin-delete"><input type="hidden" name="slug" value={challenge.slug}/><button className="text-button" type="submit">Hapus challenge</button></form></details>)}
     </section>
     <p className="account-note">Akses admin diperiksa di server dan melalui RLS. Role hanya dapat diprovision oleh pemilik project lewat SQL Editor; form publik tidak menyediakan pilihan admin.</p>
   </main>;
@@ -75,8 +75,8 @@ function ModuleForm({ action, module }: { action: (form: FormData) => void | Pro
   </form>;
 }
 
-function ChallengeForm({ action, challenge }: { action: (form: FormData) => void | Promise<void>; challenge?: ChallengeRow }) {
-  return <form action={action} className="admin-form">
+function ChallengeForm({ challenge }: { challenge?: ChallengeRow }) {
+  return <form action={saveChallenge} className="admin-form">
     <label>Slug (custom-... )<input name="slug" required pattern="custom-[a-z0-9]+(-[a-z0-9]+)*" defaultValue={challenge?.slug} maxLength={100}/></label>
     <label>Judul<input name="title" required defaultValue={challenge?.title} maxLength={120}/></label>
     <label>Kategori<input name="category" required defaultValue={challenge?.category} maxLength={80}/></label>

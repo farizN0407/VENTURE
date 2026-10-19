@@ -26,6 +26,25 @@ function backWithError(message: string): never {
   redirect(`/admin?error=${encodeURIComponent(message)}`);
 }
 
+function challengeSaveErrorMessage(error: unknown) {
+  const details = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : {};
+  const code = typeof details.code === "string" ? details.code : "";
+  const message = typeof details.message === "string" ? details.message : "";
+  if (code === "42501" || /admin access required|row-level security|permission denied/i.test(message)) {
+    return "Supabase menolak penyimpanan. Pastikan sesi login memiliki role admin dan policy RLS admin aktif.";
+  }
+  if (code === "23503") {
+    return "Slug materi terkait tidak ditemukan. Kosongkan atau gunakan slug materi yang sudah tersimpan.";
+  }
+  if (code === "PGRST202" || code === "PGRST203" || code === "42883") {
+    return "RPC admin_save_challenge tidak cocok dengan fungsi yang tersedia di Supabase. Periksa nama parameter p_payload dan schema cache.";
+  }
+  if (code === "23514" || code === "22P02" || /questions|correct option|slug/i.test(message)) {
+    return "Supabase menolak data challenge. Periksa slug custom, tingkat kesulitan, format JSON soal, dan jawaban benar.";
+  }
+  return "Challenge gagal disimpan. Periksa log server Promptly untuk detail error Supabase.";
+}
+
 export async function saveModule(form: FormData) {
   const { supabase, user } = await requireAdmin();
   const row = {
@@ -72,10 +91,42 @@ export async function saveChallenge(form: FormData) {
   });
   if (validQuestions.some((question) => question === null)) backWithError("Periksa prompt, opsi, correctIndex, explanation, dan skill setiap soal.");
   const payload = { slug, title, category, description, learning_objective: learningObjective, difficulty, module_slug: moduleSlug || null, published: form.get("published") === "on", questions: validQuestions };
-  const { error } = await supabase.rpc("admin_save_challenge", { p_payload: payload });
-  if (error) {
-    console.error("Admin challenge save failed", error);
-    backWithError("Challenge gagal disimpan. Pastikan migrasi schema sudah diterapkan dan admin terverifikasi.");
+  try {
+    const { error } = await supabase.rpc("admin_save_challenge", { p_payload: payload });
+    if (error) {
+      console.error("Admin challenge RPC returned an error", { code: error.code, message: error.message, details: error.details, hint: error.hint });
+      backWithError(challengeSaveErrorMessage(error));
+    }
+  } catch (error) {
+    // Supabase returns database errors in the response, but network/transport
+    // failures can reject the promise. Keep those from escaping as an invalid
+    // Server Action response.
+    // Next redirect signals are intentionally allowed through unchanged.
+    if (error && typeof error === "object" && "digest" in error && String(error.digest).startsWith("NEXT_REDIRECT")) throw error;
+    console.error("Admin challenge RPC request failed", error);
+    backWithError("Challenge gagal disimpan karena layanan Supabase tidak dapat dihubungi.");
+  }
+
+  // The SQL function returns void, so a successful RPC has no row payload.
+  // Verify the persisted challenge and its question count before reporting success.
+  try {
+    const [{ data: savedChallenge, error: verifyError }, { count: questionCount, error: questionError }] = await Promise.all([
+      supabase.from("challenges").select("slug,published,module_slug").eq("slug", slug).maybeSingle(),
+      supabase.from("challenge_questions").select("id", { count: "exact", head: true }).eq("challenge_slug", slug),
+    ]);
+    if (verifyError || questionError) {
+      const verificationError = verifyError ?? questionError;
+      console.error("Admin challenge persistence verification failed", { code: verificationError?.code, message: verificationError?.message });
+      backWithError("RPC berhasil merespons, tetapi hasil simpan belum dapat diverifikasi. Periksa izin baca admin dan coba muat ulang daftar.");
+    }
+    if (!savedChallenge || savedChallenge.published !== payload.published || savedChallenge.module_slug !== payload.module_slug || questionCount !== validQuestions.length) {
+      console.error("Admin challenge persistence verification mismatch", { slug, expectedQuestions: validQuestions.length, actualQuestions: questionCount, expectedPublished: payload.published, actualPublished: savedChallenge?.published });
+      backWithError("Challenge belum tersimpan lengkap. Daftar challenge dan jumlah soalnya tidak cocok dengan data form.");
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error && String(error.digest).startsWith("NEXT_REDIRECT")) throw error;
+    console.error("Admin challenge persistence verification request failed", error);
+    backWithError("Challenge mungkin sudah diproses, tetapi verifikasi Supabase gagal. Muat ulang daftar sebelum mencoba menyimpan lagi.");
   }
   redirect("/admin?saved=challenge");
 }

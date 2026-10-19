@@ -24,7 +24,7 @@ async function subscriptionState(stripe: Stripe, subscription: Stripe.Subscripti
 export async function POST(request: Request) {
   const secret = process.env.STRIPE_SECRET_KEY;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!secret || !webhookSecret || !process.env.SUPABASE_SERVICE_ROLE_KEY) return NextResponse.json({ error: "Stripe webhook belum dikonfigurasi lengkap." }, { status: 503 });
+  if (!secret || !webhookSecret || !(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)) return NextResponse.json({ error: "Stripe webhook belum dikonfigurasi lengkap." }, { status: 503 });
   const signature = request.headers.get("stripe-signature");
   if (!signature) return NextResponse.json({ error: "Missing stripe-signature." }, { status: 400 });
   const stripe = new Stripe(secret);
