@@ -4,11 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { signOut } from "@/app/auth/actions";
 import { deleteChallenge, deleteModule, saveChallenge, saveModule } from "@/app/admin/actions";
 
-type ModuleRow = { slug: string; title: string; summary: string; principle: string; example: string; practice: string; challenge_slug: string | null; next_slug: string | null; published: boolean };
+type ModuleRow = { slug: string; title: string; summary: string; principle: string; example: string; practice: string; content_domain: string; challenge_slug: string | null; next_slug: string | null; published: boolean };
 type OptionRow = { id: string; position: number; body: string };
 type AnswerKeyRow = { correct_option_id: string; explanation: string } | { correct_option_id: string; explanation: string }[];
 type QuestionRow = { id: string; position: number; prompt: string; skill: string; challenge_options: OptionRow[]; quiz_answer_keys: AnswerKeyRow | null };
-type ChallengeRow = { slug: string; title: string; category: string; description: string; learning_objective: string; difficulty: string; module_slug: string | null; published: boolean; challenge_questions: QuestionRow[] };
+type ChallengeRow = { slug: string; title: string; category: string; description: string; learning_objective: string; difficulty: string; content_domain: string; module_slug: string | null; published: boolean; challenge_questions: QuestionRow[] };
 
 function questionData(challenge: ChallengeRow) {
   return [...(challenge.challenge_questions ?? [])].sort((a, b) => a.position - b.position).map((question) => {
@@ -30,8 +30,8 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   if (roleError || profile?.role !== "admin") redirect("/account");
 
   const [{ data: moduleData, error: modulesError }, { data: challengeData, error: challengesError }, { count: userCount }, { count: attemptCount }, { count: completionCount }] = await Promise.all([
-    supabase.from("learning_modules").select("slug,title,summary,principle,example,practice,challenge_slug,next_slug,published").order("updated_at", { ascending: false }),
-    supabase.from("challenges").select("slug,title,category,description,learning_objective,difficulty,module_slug,published,challenge_questions(id,position,prompt,skill,challenge_options(id,position,body),quiz_answer_keys(correct_option_id,explanation))").order("updated_at", { ascending: false }),
+    supabase.from("learning_modules").select("slug,title,summary,principle,example,practice,content_domain,challenge_slug,next_slug,published").order("updated_at", { ascending: false }),
+    supabase.from("challenges").select("slug,title,category,description,learning_objective,difficulty,content_domain,module_slug,published,challenge_questions(id,position,prompt,skill,challenge_options(id,position,body),quiz_answer_keys(correct_option_id,explanation))").order("updated_at", { ascending: false }),
     supabase.from("profiles").select("id", { count: "exact", head: true }),
     supabase.from("quiz_attempts").select("id", { count: "exact", head: true }),
     supabase.from("module_completions").select("user_id", { count: "exact", head: true }),
@@ -49,12 +49,12 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     <div className="stats-grid admin-stats"><article><small>AKUN TERDAFTAR</small><strong>{userCount ?? "—"}</strong><span>profil Supabase</span></article><article><small>PERCOBAAN QUIZ</small><strong>{attemptCount ?? "—"}</strong><span>hasil tersimpan</span></article><article><small>MATERI SELESAI</small><strong>{completionCount ?? "—"}</strong><span>aktivitas akun</span></article></div>
     <section className="admin-section"><div className="head"><div><div className="label">LEARNING MODULES</div><h2>Materi</h2><p>Buat, edit, publikasikan, atau simpan sebagai draft.</p></div></div>
       <details className="admin-editor" open><summary>Tambah materi</summary><ModuleForm action={saveModule} /></details>
-      {modules.map((module) => <details className="admin-editor" key={module.slug}><summary><span>{module.title}</span><small>{module.published ? "Terbit" : "Draft"} · {module.slug}</small></summary><ModuleForm action={saveModule} module={module} /><form action={deleteModule} className="admin-delete"><input type="hidden" name="slug" value={module.slug}/><button className="text-button" type="submit">Hapus materi</button></form></details>)}
+      {modules.map((module) => <details className="admin-editor" key={module.slug}><summary><span>{module.title}</span><small>{module.published ? "Terbit" : "Draft"} · {module.content_domain} · {module.slug}</small></summary><ModuleForm action={saveModule} module={module} /><form action={deleteModule} className="admin-delete"><input type="hidden" name="slug" value={module.slug}/><button className="text-button" type="submit">Hapus materi</button></form></details>)}
     </section>
     <section className="admin-section"><div className="head"><div><div className="label">CHALLENGES & QUIZZES</div><h2>Challenge</h2><p>Kelola soal, opsi, kunci jawaban, pembahasan, kategori, dan tingkat kesulitan.</p></div></div>
       <p className="admin-help">Slug konten database menggunakan awalan <code>custom-</code> agar tidak bertabrakan dengan 7 materi dan 8 challenge bawaan Promptly.</p>
       <details className="admin-editor" open><summary>Tambah challenge</summary><ChallengeForm /></details>
-      {managedChallenges.map((challenge) => <details className="admin-editor" key={challenge.slug}><summary><span>{challenge.title}</span><small>{challenge.published ? "Terbit" : "Draft"} · {challenge.slug}</small></summary><ChallengeForm challenge={challenge} /><form action={deleteChallenge} className="admin-delete"><input type="hidden" name="slug" value={challenge.slug}/><button className="text-button" type="submit">Hapus challenge</button></form></details>)}
+      {managedChallenges.map((challenge) => <details className="admin-editor" key={challenge.slug}><summary><span>{challenge.title}</span><small>{challenge.published ? "Terbit" : "Draft"} · {challenge.content_domain} · {challenge.slug}</small></summary><ChallengeForm challenge={challenge} /><form action={deleteChallenge} className="admin-delete"><input type="hidden" name="slug" value={challenge.slug}/><button className="text-button" type="submit">Hapus challenge</button></form></details>)}
     </section>
     <p className="account-note">Akses admin diperiksa di server dan melalui RLS. Role hanya dapat diprovision oleh pemilik project lewat SQL Editor; form publik tidak menyediakan pilihan admin.</p>
   </main>;
@@ -64,6 +64,7 @@ function ModuleForm({ action, module }: { action: (form: FormData) => void | Pro
   return <form action={action} className="admin-form">
     <label>Slug (custom-... )<input name="slug" required pattern="custom-[a-z0-9]+(-[a-z0-9]+)*" defaultValue={module?.slug} maxLength={100}/></label>
     <label>Judul<input name="title" required defaultValue={module?.title} maxLength={120}/></label>
+    <label>Domain<select name="content_domain" required defaultValue={module?.content_domain ?? "ai_literacy"}>{module?.content_domain === "unclassified" && <option value="unclassified">Belum diklasifikasikan — pilih domain</option>}<option value="ai_literacy">AI Literacy</option><option value="cybersecurity">Cybersecurity</option></select></label>
     <label>Ringkasan<textarea name="summary" required defaultValue={module?.summary} maxLength={500}/></label>
     <label>Prinsip<textarea name="principle" required defaultValue={module?.principle} maxLength={5000}/></label>
     <label>Contoh praktis<textarea name="example" required defaultValue={module?.example} maxLength={5000}/></label>
@@ -79,6 +80,7 @@ function ChallengeForm({ challenge }: { challenge?: ChallengeRow }) {
   return <form action={saveChallenge} className="admin-form">
     <label>Slug (custom-... )<input name="slug" required pattern="custom-[a-z0-9]+(-[a-z0-9]+)*" defaultValue={challenge?.slug} maxLength={100}/></label>
     <label>Judul<input name="title" required defaultValue={challenge?.title} maxLength={120}/></label>
+    <label>Domain<select name="content_domain" required defaultValue={challenge?.content_domain ?? "ai_literacy"}>{challenge?.content_domain === "unclassified" && <option value="unclassified">Belum diklasifikasikan — pilih domain</option>}<option value="ai_literacy">AI Literacy</option><option value="cybersecurity">Cybersecurity</option></select></label>
     <label>Kategori<input name="category" required defaultValue={challenge?.category} maxLength={80}/></label>
     <label>Deskripsi<textarea name="description" required defaultValue={challenge?.description} maxLength={500}/></label>
     <label>Learning objective<textarea name="learning_objective" required defaultValue={challenge?.learning_objective} maxLength={1000}/></label>

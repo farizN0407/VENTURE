@@ -26,6 +26,7 @@ create table if not exists public.quiz_attempts (
   user_id uuid not null references auth.users(id) on delete cascade,
   challenge_slug text not null,
   topic_slug text,
+  content_domain text not null default 'unclassified' check (content_domain in ('unclassified','ai_literacy','cybersecurity')),
   attempt_id uuid,
   score integer not null check (score between 0 and 100),
   correct_answers integer not null check (correct_answers between 0 and total_questions),
@@ -37,8 +38,10 @@ create table if not exists public.quiz_attempts (
 alter table public.quiz_attempts add column if not exists skill_results jsonb not null default '[]'::jsonb;
 alter table public.quiz_attempts add column if not exists answer_details jsonb not null default '[]'::jsonb;
 alter table public.quiz_attempts add column if not exists topic_slug text;
+alter table public.quiz_attempts add column if not exists content_domain text not null default 'unclassified';
 alter table public.quiz_attempts add column if not exists attempt_id uuid;
 create index if not exists quiz_attempts_user_created_at on public.quiz_attempts (user_id,created_at desc);
+create index if not exists quiz_attempts_user_domain_created_at on public.quiz_attempts (user_id,content_domain,created_at desc);
 create unique index if not exists quiz_attempts_user_attempt_id on public.quiz_attempts (user_id,attempt_id) where attempt_id is not null;
 
 create table if not exists public.module_completions (
@@ -56,6 +59,7 @@ create table if not exists public.learning_modules (
   principle text not null check (length(trim(principle)) between 1 and 5000),
   example text not null check (length(trim(example)) between 1 and 5000),
   practice text not null check (length(trim(practice)) between 1 and 5000),
+  content_domain text not null default 'unclassified' check (content_domain in ('unclassified','ai_literacy','cybersecurity')),
   challenge_slug text,
   next_slug text,
   published boolean not null default false,
@@ -71,6 +75,7 @@ create table if not exists public.challenges (
   description text not null check (length(trim(description)) between 1 and 500),
   learning_objective text not null default '' check (length(learning_objective) <= 1000),
   difficulty text not null check (difficulty in ('Pemula', 'Menengah', 'Lanjutan')),
+  content_domain text not null default 'unclassified' check (content_domain in ('unclassified','ai_literacy','cybersecurity')),
   module_slug text references public.learning_modules(slug) on delete set null,
   published boolean not null default false,
   created_by uuid references auth.users(id) on delete set null,
@@ -78,6 +83,19 @@ create table if not exists public.challenges (
   updated_at timestamptz not null default now()
 );
 alter table public.challenges add column if not exists learning_objective text not null default '';
+alter table public.learning_modules add column if not exists content_domain text not null default 'unclassified';
+alter table public.challenges add column if not exists content_domain text not null default 'unclassified';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname='quiz_attempts_content_domain_check' and conrelid='public.quiz_attempts'::regclass) then
+    alter table public.quiz_attempts add constraint quiz_attempts_content_domain_check check (content_domain in ('unclassified','ai_literacy','cybersecurity'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname='learning_modules_content_domain_check' and conrelid='public.learning_modules'::regclass) then
+    alter table public.learning_modules add constraint learning_modules_content_domain_check check (content_domain in ('unclassified','ai_literacy','cybersecurity'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname='challenges_content_domain_check' and conrelid='public.challenges'::regclass) then
+    alter table public.challenges add constraint challenges_content_domain_check check (content_domain in ('unclassified','ai_literacy','cybersecurity'));
+  end if;
+end $$;
 
 create table if not exists public.challenge_questions (
   id uuid primary key default gen_random_uuid(),
@@ -177,6 +195,7 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_slug text := p_payload->>'slug';
+  v_content_domain text := p_payload->>'content_domain';
   v_question jsonb;
   v_option jsonb;
   v_question_id uuid;
@@ -187,13 +206,15 @@ declare
   v_correct_index integer;
 begin
   if not public.is_promptly_admin() then raise exception 'Admin access required.'; end if;
+  if v_content_domain is null or v_content_domain not in ('ai_literacy','cybersecurity') then raise exception 'A valid content domain is required.'; end if;
+  if nullif(p_payload->>'module_slug','') is not null and not exists (select 1 from public.learning_modules m where m.slug=p_payload->>'module_slug' and m.content_domain=v_content_domain) then raise exception 'Related module must exist in the same content domain.'; end if;
   if v_slug is null or v_slug !~ '^custom-[a-z0-9]+(-[a-z0-9]+)*$' then raise exception 'Custom challenge slugs must start with custom-.'; end if;
   if jsonb_typeof(p_payload->'questions') is distinct from 'array' then raise exception 'Questions must be an array.'; end if;
   if jsonb_array_length(p_payload->'questions') not between 1 and 50 then raise exception 'Add between 1 and 50 questions.'; end if;
-  insert into public.challenges (slug,title,category,description,learning_objective,difficulty,module_slug,published,created_by,updated_at)
-  values (v_slug,trim(p_payload->>'title'),trim(p_payload->>'category'),trim(p_payload->>'description'),trim(p_payload->>'learning_objective'),p_payload->>'difficulty',nullif(p_payload->>'module_slug',''),coalesce((p_payload->>'published')::boolean,false),auth.uid(),now())
+  insert into public.challenges (slug,title,category,description,learning_objective,difficulty,content_domain,module_slug,published,created_by,updated_at)
+  values (v_slug,trim(p_payload->>'title'),trim(p_payload->>'category'),trim(p_payload->>'description'),trim(p_payload->>'learning_objective'),p_payload->>'difficulty',v_content_domain,nullif(p_payload->>'module_slug',''),coalesce((p_payload->>'published')::boolean,false),auth.uid(),now())
   on conflict (slug) do update set title=excluded.title, category=excluded.category, description=excluded.description,learning_objective=excluded.learning_objective,
-    difficulty=excluded.difficulty, module_slug=excluded.module_slug, published=excluded.published, updated_at=now();
+    difficulty=excluded.difficulty, content_domain=excluded.content_domain, module_slug=excluded.module_slug, published=excluded.published, updated_at=now();
   delete from public.challenge_questions where challenge_slug=v_slug;
   for v_question, v_question_position in select value,ordinality from jsonb_array_elements(p_payload->'questions') with ordinality loop
     if jsonb_typeof(v_question->'options') is distinct from 'array' then raise exception 'Question options must be an array.'; end if;
@@ -256,11 +277,15 @@ declare
   v_score integer;
   v_saved boolean := false;
   v_existing record;
+  v_content_domain text;
 begin
   if p_answers is null or jsonb_typeof(p_answers) is distinct from 'array' then raise exception 'Answers must be an array.'; end if;
   if p_attempt_id is null then raise exception 'Attempt id is required.'; end if;
+  select c.content_domain into v_content_domain from public.challenges c
+  where c.slug=p_challenge_slug and ((c.published and c.content_domain='ai_literacy') or public.is_promptly_admin());
+  if v_content_domain is null then raise exception 'Quiz is unavailable.'; end if;
   select count(*) into v_total from public.challenge_questions q join public.challenges c on c.slug=q.challenge_slug
-  where c.slug=p_challenge_slug and (c.published or public.is_promptly_admin());
+  where c.slug=p_challenge_slug and ((c.published and c.content_domain='ai_literacy') or public.is_promptly_admin());
   if v_total < 1 or jsonb_array_length(p_answers) <> v_total then raise exception 'Quiz answer count is invalid.'; end if;
   for v_row in
     select q.id,q.position,q.prompt,q.skill,o.position as correct_position,o.body as correct_answer,ak.explanation,
@@ -268,7 +293,7 @@ begin
     from public.challenge_questions q join public.challenges c on c.slug=q.challenge_slug
     join public.quiz_answer_keys ak on ak.question_id=q.id
     join public.challenge_options o on o.id=ak.correct_option_id
-    where c.slug=p_challenge_slug and (c.published or public.is_promptly_admin()) order by q.position
+    where c.slug=p_challenge_slug and ((c.published and c.content_domain='ai_literacy') or public.is_promptly_admin()) order by q.position
   loop
     v_position := v_position+1;
     if jsonb_typeof(p_answers->(v_position-1)) is distinct from 'number' then raise exception 'An answer is invalid.'; end if;
@@ -284,8 +309,8 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object('skill',skill,'correct',correct,'total',total,'score',round(correct*100.0/total)) order by skill),'[]'::jsonb)
   into v_skills from (select x->>'skill' as skill,count(*) filter (where (x->>'is_correct')::boolean) as correct,count(*) as total from jsonb_array_elements(v_details) x group by x->>'skill') s;
   if v_user_id is not null then
-    insert into public.quiz_attempts (user_id,challenge_slug,attempt_id,score,correct_answers,total_questions,skill_results,answer_details)
-    values (v_user_id,p_challenge_slug,p_attempt_id,v_score,v_correct,v_total,v_skills,v_details)
+    insert into public.quiz_attempts (user_id,challenge_slug,content_domain,attempt_id,score,correct_answers,total_questions,skill_results,answer_details)
+    values (v_user_id,p_challenge_slug,v_content_domain,p_attempt_id,v_score,v_correct,v_total,v_skills,v_details)
     on conflict (user_id,attempt_id) where attempt_id is not null do nothing;
     if found then
       v_saved:=true;
@@ -334,13 +359,13 @@ drop policy if exists "Admins manage answer keys" on public.quiz_answer_keys;
 create policy "Users can read own profile" on public.profiles for select to authenticated using (auth.uid()=id or public.is_promptly_admin());
 create policy "Users can update own display name" on public.profiles for update to authenticated using (auth.uid()=id) with check (auth.uid()=id);
 create policy "Admins manage modules" on public.learning_modules for all to authenticated using (public.is_promptly_admin()) with check (public.is_promptly_admin());
-create policy "Users can read public or admin modules" on public.learning_modules for select to anon,authenticated using (published or public.is_promptly_admin());
+create policy "Users can read public or admin modules" on public.learning_modules for select to anon,authenticated using ((published and content_domain='ai_literacy') or public.is_promptly_admin());
 create policy "Admins manage challenges" on public.challenges for all to authenticated using (public.is_promptly_admin()) with check (public.is_promptly_admin());
-create policy "Users can read public or admin challenges" on public.challenges for select to anon,authenticated using (published or public.is_promptly_admin());
+create policy "Users can read public or admin challenges" on public.challenges for select to anon,authenticated using ((published and content_domain='ai_literacy') or public.is_promptly_admin());
 create policy "Admins manage challenge questions" on public.challenge_questions for all to authenticated using (public.is_promptly_admin()) with check (public.is_promptly_admin());
-create policy "Users can read questions from published challenges" on public.challenge_questions for select to anon,authenticated using (exists (select 1 from public.challenges c where c.slug=challenge_slug and c.published) or public.is_promptly_admin());
+create policy "Users can read questions from published challenges" on public.challenge_questions for select to anon,authenticated using (exists (select 1 from public.challenges c where c.slug=challenge_slug and c.published and c.content_domain='ai_literacy') or public.is_promptly_admin());
 create policy "Admins manage challenge options" on public.challenge_options for all to authenticated using (public.is_promptly_admin()) with check (public.is_promptly_admin());
-create policy "Users can read options from published challenges" on public.challenge_options for select to anon,authenticated using (exists (select 1 from public.challenge_questions q join public.challenges c on c.slug=q.challenge_slug where q.id=question_id and c.published) or public.is_promptly_admin());
+create policy "Users can read options from published challenges" on public.challenge_options for select to anon,authenticated using (exists (select 1 from public.challenge_questions q join public.challenges c on c.slug=q.challenge_slug where q.id=question_id and c.published and c.content_domain='ai_literacy') or public.is_promptly_admin());
 create policy "Admins manage answer keys" on public.quiz_answer_keys for all to authenticated using (public.is_promptly_admin()) with check (public.is_promptly_admin());
 create policy "Users can read own attempts" on public.quiz_attempts for select to authenticated using (auth.uid()=user_id or public.is_promptly_admin());
 create policy "Users can read own completions" on public.module_completions for select to authenticated using (auth.uid()=user_id or public.is_promptly_admin());

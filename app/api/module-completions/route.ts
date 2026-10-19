@@ -16,7 +16,7 @@ export async function POST(request: Request) {
 
   let visible = lessons.some((lesson) => lesson.slug === slug);
   if (!visible) {
-    const { data } = await supabase.from("learning_modules").select("slug").eq("slug", slug).eq("published", true).maybeSingle();
+    const { data } = await supabase.from("learning_modules").select("slug").eq("slug", slug).eq("published", true).eq("content_domain", "ai_literacy").maybeSingle();
     visible = Boolean(data);
   }
   if (!visible) return NextResponse.json({ error: "Materi tidak tersedia." }, { status: 404 });

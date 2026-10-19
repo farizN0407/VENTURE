@@ -53,7 +53,7 @@ export async function getPublishedModules(): Promise<Lesson[]> {
   const supabase = await publicContentClient("materi");
   const { data, error } = await supabase.from("learning_modules")
     .select("slug,title,summary,principle,example,practice,challenge_slug,next_slug")
-    .eq("published", true).order("title");
+    .eq("published", true).eq("content_domain", "ai_literacy").order("title");
   if (error) {
     console.error("Published learning modules query failed", error);
     throw new PublishedContentError("materi");
@@ -65,7 +65,7 @@ export async function getPublishedModule(slug: string): Promise<Lesson | undefin
   const supabase = await publicContentClient("materi");
   const { data, error } = await supabase.from("learning_modules")
     .select("slug,title,summary,principle,example,practice,challenge_slug,next_slug")
-    .eq("slug", slug).eq("published", true).maybeSingle();
+    .eq("slug", slug).eq("published", true).eq("content_domain", "ai_literacy").maybeSingle();
   if (error) {
     console.error("Published learning module query failed", error);
     throw new PublishedContentError("materi");
@@ -77,7 +77,7 @@ export async function getPublishedChallenges(): Promise<PublicChallenge[]> {
   const supabase = await publicContentClient("challenge");
   const { data, error } = await supabase.from("challenges")
     .select("slug,module_slug,title,category,description,learning_objective,difficulty,challenge_questions(id,position,prompt,skill,challenge_options(position,body))")
-    .eq("published", true).order("title");
+    .eq("published", true).eq("content_domain", "ai_literacy").order("title");
   if (error) {
     console.error("Published challenges query failed", error);
     throw new PublishedContentError("challenge");
@@ -89,7 +89,7 @@ export async function getPublishedChallenge(slug: string): Promise<PublicChallen
   const supabase = await publicContentClient("challenge");
   const { data, error } = await supabase.from("challenges")
     .select("slug,module_slug,title,category,description,learning_objective,difficulty,challenge_questions(id,position,prompt,skill,challenge_options(position,body))")
-    .eq("slug", slug).eq("published", true).maybeSingle();
+    .eq("slug", slug).eq("published", true).eq("content_domain", "ai_literacy").maybeSingle();
   if (error) {
     console.error("Published challenge query failed", error);
     throw new PublishedContentError("challenge");

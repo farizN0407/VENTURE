@@ -2,6 +2,7 @@ export const AI_SKILLS = ["Prompting", "Critical Thinking", "Fact Checking", "AI
 export type AiSkill = (typeof AI_SKILLS)[number];
 export type ScoredAttempt = {
   score: number;
+  content_domain?: string | null;
   skill_results?: { skill: string; correct: number; total: number }[] | null;
   answer_details?: { skill?: string; is_correct?: boolean }[] | null;
 };
@@ -34,7 +35,9 @@ export function getAttemptSkillResults(attempt: ScoredAttempt) {
 }
 
 export function isAiLiteracyAttempt(attempt: ScoredAttempt) {
-  return getAttemptSkillResults(attempt).length > 0;
+  // A matching skill label is not evidence that an attempt belongs to the
+  // AI literacy product. Only the domain snapshot assigned at submission is.
+  return attempt.content_domain === "ai_literacy";
 }
 
 export function calculateLiteracyProfile(attempts: ScoredAttempt[]) {

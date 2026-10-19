@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 .vercel/
+content-promotion/
 build/
 dist/
 coverage/

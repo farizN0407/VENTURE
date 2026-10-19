@@ -15,7 +15,7 @@ async function loadHomeProfile() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { profile: calculateLiteracyProfile([]), signedIn: false, available: true };
-  const { data, error } = await supabase.from("quiz_attempts").select("score,skill_results,answer_details").eq("user_id", user.id);
+  const { data, error } = await supabase.from("quiz_attempts").select("content_domain,score,skill_results,answer_details").eq("user_id", user.id).eq("content_domain", "ai_literacy");
   if (error) return { profile: calculateLiteracyProfile([]), signedIn: true, available: false };
   return { profile: calculateLiteracyProfile(data ?? []), signedIn: true, available: true };
  } catch {
@@ -35,7 +35,7 @@ export default async function Home() {
  const homepageChallenges = [...challenges.map((challenge) => ({ slug: challenge.slug, title: challenge.title, category: challenge.category, description: challenge.description })), ...databaseChallenges.filter((challenge) => !challenges.some((item) => item.slug === challenge.slug))];
  return <>
   <div className="hero-shell"><div className="wrap"><header className="hero" id="top">
-   <nav className="nav" aria-label="Navigasi utama"><Link className="brand" href="/">promptly<b>.</b></Link><div className="navlinks"><a href="#challenges">Challenges</a><Link href="/learn">Materi</Link><a href="#how-it-works">Cara kerja</a><a href="#about">Tentang</a><Link href="/pricing">Paket</Link></div><div className="nav-account-actions">{homeProfile.signedIn ? <><Link className="nav-login" href="/account">Akun</Link><form action={signOut}><button className="nav-login nav-logout" type="submit">Keluar</button></form></> : <><Link className="nav-login" href="/login?next=%2F">Masuk</Link><Link className="nav-login" href="/register">Daftar</Link></>}</div><Link className="nav-cta" href="/challenges">Mulai challenge →</Link></nav>
+   <nav className="nav" aria-label="Navigasi utama"><Link className="brand" href="/">promptly<b>.</b></Link><div className="navlinks"><a href="#challenges">Challenges</a><Link href="/learn">Materi</Link><a href="#how-it-works">Cara kerja</a><a href="#about">Tentang</a><Link href="/pricing">Paket</Link></div><div className="nav-account-actions">{homeProfile.signedIn ? <><Link className="nav-login" href="/account">Profil</Link><form action={signOut}><button className="nav-login nav-logout" type="submit">Keluar</button></form></> : <><Link className="nav-login" href="/login?next=%2F">Masuk</Link><Link className="nav-login" href="/register">Daftar</Link></>}</div><Link className="nav-cta" href="/challenges">Mulai challenge →</Link></nav>
    <div className="hero-content"><div className="label">AI literacy untuk mahasiswa</div><h1>How smart are you with <span>AI?</span></h1><p>Belajar pakai AI dengan lebih cerdas, satu challenge singkat dalam satu waktu. Mulai dari cara menulis prompt yang jelas.</p><div className="buttons"><Link className="btn btn-main" href="/challenges">Mulai challenge pertama <b>↗</b></Link><a className="btn btn-alt" href="#challenges">Jelajahi challenge <b>→</b></a></div><div className="meta"><span><i><Clock3 size={13}/></i> 3–5 menit</span><span><i><BookOpenCheck size={13}/></i> Kuis interaktif</span><span><i><ChartNoAxesColumnIncreasing size={13}/></i> Skor AI</span></div></div>
    <div className="hero-picture" aria-hidden="true"><div className="hero-graphic">AI?</div></div>
   </header></div></div>

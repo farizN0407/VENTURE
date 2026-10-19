@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     const record = {
       user_id: user.id,
       challenge_slug: targetChallenge,
+      content_domain: "ai_literacy",
       topic_slug: topic,
       attempt_id: data.attempt_id,
       score: summary.score,
@@ -86,7 +87,7 @@ export async function POST(request: Request) {
     try { admin = createAdminClient(); } catch {
       return NextResponse.json({ ...summary, saved: false, save_reason: "storage_unavailable" });
     }
-    const { error } = await admin.from("quiz_attempts").insert({ user_id: user.id, challenge_slug: staticChallenge.slug, attempt_id: data.attempt_id, score: summary.score,
+    const { error } = await admin.from("quiz_attempts").insert({ user_id: user.id, challenge_slug: staticChallenge.slug, content_domain: "ai_literacy", attempt_id: data.attempt_id, score: summary.score,
       correct_answers: summary.correct_answers, total_questions: summary.total_questions, skill_results: summary.skill_results, answer_details: summary.answer_details });
     if (error) {
       if (error.code === "23505") {
