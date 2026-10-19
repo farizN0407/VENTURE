@@ -81,17 +81,31 @@ for (const topic of topicSlugs) {
 }
 
 const freshProfile = progress.calculateLiteracyProfile([]);
-assert.equal(freshProfile.overallScore, 0);
+assert.equal(freshProfile.overallScore, null);
 assert.equal(freshProfile.status, "Baru memulai");
 assert.equal(freshProfile.completedAttempts, 0);
-assert.ok(freshProfile.skills.length === 5 && freshProfile.skills.every((skill) => skill.score === 0 && skill.total === 0));
+assert.ok(freshProfile.skills.length === 5 && freshProfile.skills.every((skill) => skill.score === null && skill.total === 0));
 const updatedProfile = progress.calculateLiteracyProfile([
   { score: 80, skill_results: [{ skill: "Prompting", correct: 4, total: 5, score: 80 }] },
   { score: 60, skill_results: [{ skill: "Fact Checking", correct: 3, total: 5, score: 60 }, { skill: "Prompting", correct: 2, total: 5, score: 40 }] },
 ]);
 assert.equal(updatedProfile.overallScore, 70, "overall score is the mean of completed quiz scores");
 assert.equal(updatedProfile.skills.find((skill) => skill.name === "Prompting").score, 60, "skill score is correct answers divided by all questions for that skill");
-assert.equal(updatedProfile.skills.find((skill) => skill.name === "Critical Thinking").score, 0, "unattempted skills remain zero");
+assert.equal(updatedProfile.skills.find((skill) => skill.name === "Critical Thinking").score, null, "unattempted skills have no score");
+const answersBasedProfile = progress.calculateLiteracyProfile([
+  { score: 100, skill_results: [{ skill: "Critical Thinking", correct: 5, total: 5 }], answer_details: [
+    { skill: "Prompting", is_correct: true }, { skill: "Prompting", is_correct: false },
+    { skill: "Cybersecurity", is_correct: true },
+  ] },
+]);
+assert.equal(answersBasedProfile.overallScore, 100);
+assert.equal(answersBasedProfile.skills.find((skill) => skill.name === "Prompting").score, 50, "per-question skill mapping overrides stale aggregates");
+assert.equal(answersBasedProfile.skills.find((skill) => skill.name === "Critical Thinking").score, null, "skills from unrelated aggregate data are ignored when answer details exist");
+const unrelatedProfile = progress.calculateLiteracyProfile([
+  { score: 100, skill_results: [{ skill: "Cybersecurity", correct: 5, total: 5 }] },
+]);
+assert.equal(unrelatedProfile.overallScore, null, "attempts without mapped AI literacy skills are excluded from the profile");
+assert.equal(unrelatedProfile.completedAttempts, 0);
 
 const schema = fs.readFileSync(path.join(root, "supabase/schema.sql"), "utf8");
 assert.match(schema, /quiz_attempts_user_attempt_id[\s\S]+?where attempt_id is not null/i, "completed user attempts are idempotent by unique user and attempt id");
@@ -109,4 +123,4 @@ assert.match(schema, /conname = 'profiles_role_check' and conrelid = 'public\.pr
 assert.match(schema, /::numeric <> trunc\(/i, "quiz answer indexes must be whole numbers");
 assert.match(schema, /last_event_created < excluded\.last_event_created/i, "duplicate and older subscription events cannot overwrite newer state");
 
-console.log(`PASS ${topicSlugs.length} topics, ${allIds.size} unique questions, randomized scoring, five-question selection, repeat avoidance, and zero-start profile checks`);
+console.log(`PASS ${topicSlugs.length} topics, ${allIds.size} unique questions, randomized scoring, five-question selection, repeat avoidance, and neutral unassessed-skill profile checks`);

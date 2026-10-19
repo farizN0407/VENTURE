@@ -4,9 +4,9 @@ import { signOut } from "@/app/auth/actions";
 import { challenges } from "@/lib/challenges";
 import { lessons } from "@/lib/learning";
 import { resolvePlan } from "@/lib/entitlements";
-import { calculateLiteracyProfile } from "@/lib/progress";
+import { calculateLiteracyProfile, isAiLiteracyAttempt } from "@/lib/progress";
 
-type Attempt = { id: number; challenge_slug: string; score: number; correct_answers: number; total_questions: number; created_at: string; skill_results: { skill: string; correct: number; total: number; score: number }[] | null };
+type Attempt = { id: number; challenge_slug: string; score: number; correct_answers: number; total_questions: number; created_at: string; skill_results: { skill: string; correct: number; total: number; score: number }[] | null; answer_details: { skill?: string; is_correct?: boolean }[] | null };
 type ModuleRow = { slug: string; title: string };
 const challengeBySlug = Object.fromEntries(challenges.map((challenge) => [challenge.slug, challenge.title]));
 const nextBySkill: Record<string, { lesson: string; challenge: string }> = {
@@ -23,8 +23,8 @@ export default async function AccountPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return <main className="wrap section"><Link className="brand" href="/">promptly<b>.</b></Link><section className="account-panel"><div className="label">AKUN</div><h1 className="page-heading">Masuk untuk melihat progres.</h1><p>Hasil quiz dan penyelesaian materi tersimpan hanya setelah kamu masuk dan Supabase siap. Challenge tetap bisa dicoba sebagai tamu.</p><div className="buttons"><Link className="btn btn-main" href="/login?next=%2Faccount">Masuk atau daftar</Link><Link className="btn btn-alt" href="/challenges">Lanjut sebagai tamu</Link></div></section></main>;
 
-  const [{ data: attemptsData, error: attemptsError, count: attemptCount }, { data: completionData, error: completionError }, { data: subscription, error: subscriptionError }, { data: profile }, { data: moduleData }, { data: challengeData }] = await Promise.all([
-    supabase.from("quiz_attempts").select("id,challenge_slug,score,correct_answers,total_questions,created_at,skill_results", { count: "exact" }).eq("user_id", user.id).order("created_at", { ascending: false }).limit(1000),
+  const [{ data: attemptsData, error: attemptsError }, { data: completionData, error: completionError }, { data: subscription, error: subscriptionError }, { data: profile }, { data: moduleData }, { data: challengeData }] = await Promise.all([
+    supabase.from("quiz_attempts").select("id,challenge_slug,score,correct_answers,total_questions,created_at,skill_results,answer_details").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1000),
     supabase.from("module_completions").select("module_slug,completed_at").eq("user_id", user.id),
     supabase.from("subscriptions").select("status,current_period_end").eq("user_id", user.id).maybeSingle(),
     supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
@@ -32,29 +32,28 @@ export default async function AccountPage() {
     supabase.from("challenges").select("slug,title").eq("published", true),
   ]);
   const attempts = (attemptsData ?? []) as Attempt[];
-  const literacyProfile = calculateLiteracyProfile(attempts);
+  const literacyAttempts = attempts.filter(isAiLiteracyAttempt);
+  const excludedAttemptCount = attempts.length - literacyAttempts.length;
+  const literacyProfile = calculateLiteracyProfile(literacyAttempts);
   const completions = (completionData ?? []) as { module_slug: string; completed_at: string }[];
-  const completedModuleSlugs = new Set(completions.map((item) => item.module_slug));
-  const completedChallengeSlugs = new Set(attempts.map((item) => item.challenge_slug));
   const dynamicModules = (moduleData ?? []) as ModuleRow[];
   const dynamicChallenges = (challengeData ?? []) as ModuleRow[];
   const moduleNames = new Map([...lessons.map((item) => [item.slug, item.title] as const), ...dynamicModules.map((item) => [item.slug, item.title] as const)]);
+  const completedModuleSlugs = new Set(completions.map((item) => item.module_slug).filter((slug) => moduleNames.has(slug)));
+  const availableChallengeSlugs = new Set([...challenges.map((item) => item.slug), ...dynamicChallenges.map((item) => item.slug)]);
+  const completedChallengeSlugs = new Set(attempts.map((item) => item.challenge_slug).filter((slug) => availableChallengeSlugs.has(slug)));
   const availableChallengeCount = challenges.length + dynamicChallenges.filter((item) => !challengeBySlug[item.slug]).length;
   const totalItems = moduleNames.size + availableChallengeCount;
   const progress = totalItems ? Math.round((completedModuleSlugs.size + completedChallengeSlugs.size) * 100 / totalItems) : 0;
 
   const bestScores = new Map<string, number>();
-  const skillTotals = new Map<string, { correct: number; total: number }>();
-  for (const attempt of attempts) {
+  for (const attempt of literacyAttempts) {
     bestScores.set(attempt.challenge_slug, Math.max(bestScores.get(attempt.challenge_slug) ?? 0, attempt.score));
-    for (const item of attempt.skill_results ?? []) {
-      const current = skillTotals.get(item.skill) ?? { correct: 0, total: 0 };
-      current.correct += item.correct; current.total += item.total; skillTotals.set(item.skill, current);
-    }
   }
-  const weakSkills = [...skillTotals].map(([skill, scores]) => ({ skill, ...scores, score: Math.round(scores.correct * 100 / scores.total) }))
-    .filter((item) => item.score < 80).sort((a, b) => a.score - b.score).slice(0, 3);
-  const recommendations = (weakSkills.length ? weakSkills : [{ skill: "Prompting", correct: 0, total: 1, score: 0 }]).map(({ skill }) => ({ skill, ...(nextBySkill[skill] ?? nextBySkill.Prompting) }));
+  const weakSkills = literacyProfile.skills.filter((skill) => skill.total > 0 && skill.score !== null && skill.score < 80).sort((a, b) => a.score! - b.score!).slice(0, 3);
+  const unassessedSkills = literacyProfile.skills.filter((skill) => skill.total === 0);
+  const recommendationSkills = [...unassessedSkills, ...weakSkills].slice(0, 3);
+  const recommendations = recommendationSkills.map(({ name }) => ({ skill: name, ...(nextBySkill[name] ?? nextBySkill.Prompting) }));
   const periodEnd = subscription?.current_period_end ? Date.parse(subscription.current_period_end) : 0;
   const isPro = resolvePlan(subscription) === "pro";
   const dataUnavailable = Boolean(attemptsError || completionError || subscriptionError);
@@ -66,15 +65,15 @@ export default async function AccountPage() {
       <div className="label">DASHBOARD BELAJAR</div><h1 className="page-heading">Progress belajarmu</h1><p className="account-email">{user.email}</p>
       <div className="account-plan"><div><small>PAKET</small><strong>{isPro ? "Promptly Pro" : "Free"}</strong></div><span>{isPro ? `Aktif sampai ${new Date(periodEnd).toLocaleDateString("id-ID")}` : "Semua konten belajar yang ada tersedia gratis"}</span></div>
       {dataUnavailable && <p className="auth-message auth-error" role="alert">Sebagian data dashboard belum dapat dimuat. Periksa penerapan schema Promptly dan kebijakan RLS di Supabase.</p>}
-      <section className="profile account-literacy-profile"><div className="profile-title"><h2>AI Literacy Profile</h2><span className="level">{attemptsError ? "BELUM TERSEDIA" : literacyProfile.status.toUpperCase()}</span></div><div className="score"><div className="circle"><b>{attemptsError ? "—" : literacyProfile.overallScore}</b></div><div><small>SKOR KESELURUHAN</small><strong>{attemptsError ? "Progres belum dapat dimuat" : literacyProfile.status}</strong><small>{attemptsError ? "Periksa koneksi dan kebijakan Supabase" : `${literacyProfile.completedAttempts} quiz selesai`}</small></div></div><p className="profile-method">Skor keseluruhan adalah rata-rata skor setiap quiz selesai. Skor skill adalah jawaban benar ÷ seluruh soal dalam skill tersebut. Membuka halaman tidak mengubah skor.</p>{literacyProfile.skills.map((skill) => <div className="skill" key={skill.name}><span>{skill.name}</span><div className="bar"><i style={{ width: `${attemptsError ? 0 : skill.score}%` }} /></div><em>{attemptsError ? "—" : skill.score}</em></div>)}</section>
+      <section className="profile account-literacy-profile"><div className="profile-title"><h2>AI Literacy Profile</h2><span className="level">{attemptsError ? "BELUM TERSEDIA" : literacyProfile.status.toUpperCase()}</span></div><div className="score"><div className="circle"><b>{attemptsError ? "—" : literacyProfile.overallScore ?? "—"}</b></div><div><small>SKOR KESELURUHAN</small><strong>{attemptsError ? "Progres belum dapat dimuat" : literacyProfile.status}</strong><small>{attemptsError ? "Periksa koneksi dan kebijakan Supabase" : `${literacyProfile.completedAttempts} quiz AI literacy selesai`}</small></div></div><p className="profile-method">Skor keseluruhan adalah rata-rata hasil quiz AI literacy yang tersimpan. Skor tiap skill dihitung dari jawaban per soal yang memiliki pemetaan skill tersebut. Skill yang belum diuji ditandai sebagai belum ada data.</p>{literacyProfile.skills.map((skill) => <div className="skill" key={skill.name}><span>{skill.name}</span><div className="bar"><i style={{ width: `${attemptsError ? 0 : skill.score ?? 0}%` }} /></div><em>{attemptsError ? "—" : skill.score === null ? "Belum ada data" : `${skill.score}%`}</em></div>)}</section>
       <div className="progress-overview"><div><small>KEMAJUAN KESELURUHAN</small><strong>{progress}%</strong><span>{completedModuleSlugs.size} materi · {completedChallengeSlugs.size} challenge selesai</span></div><div className="progress-track"><i style={{ width: `${progress}%` }} /></div></div>
-      <div className="stats-grid"><article><small>TOTAL QUIZ</small><strong>{attemptCount ?? attempts.length}</strong><span>termasuk percobaan ulang</span></article><article><small>MATERI SELESAI</small><strong>{completedModuleSlugs.size}/{moduleNames.size}</strong><span>tersimpan di akun</span></article><article><small>BEST SCORE</small><strong>{attempts.length ? Math.max(...attempts.map((attempt) => attempt.score)) : "—"}</strong><span>skor tertinggi dari riwayat termuat</span></article></div>
-      <div className="dashboard-columns"><section><h2 className="account-subheading">Area untuk ditingkatkan</h2>{weakSkills.length ? <ul className="dashboard-list">{weakSkills.map(({ skill, score }) => <li key={skill}><span>{skill}</span><strong>{score}%</strong></li>)}</ul> : <p className="account-empty">{attempts.length ? "Belum ada area lemah yang menonjol dari jawaban tersimpan." : "Selesaikan quiz agar rekomendasi didasarkan pada jawabanmu."}</p>}</section>
+      <div className="stats-grid"><article><small>TOTAL QUIZ AI LITERACY</small><strong>{literacyAttempts.length}</strong><span>percobaan yang memiliki hasil skill AI literacy</span></article><article><small>MATERI SELESAI</small><strong>{completedModuleSlugs.size}/{moduleNames.size}</strong><span>tersimpan di akun</span></article><article><small>BEST SCORE AI LITERACY</small><strong>{literacyAttempts.length ? Math.max(...literacyAttempts.map((attempt) => attempt.score)) : "—"}</strong><span>rata-rata profil hanya memakai quiz relevan</span></article></div>
+      <div className="dashboard-columns"><section><h2 className="account-subheading">Area untuk ditingkatkan</h2>{weakSkills.length ? <ul className="dashboard-list">{weakSkills.map(({ name, score }) => <li key={name}><span>{name}</span><strong>{score}%</strong></li>)}</ul> : <p className="account-empty">{literacyAttempts.length ? "Belum ada area lemah yang menonjol pada skill yang sudah diuji." : "Selesaikan quiz AI literacy agar rekomendasi didasarkan pada jawabanmu."}</p>}</section>
         <section><h2 className="account-subheading">Rekomendasi berikutnya</h2>{recommendations.length ? <ul className="dashboard-list">{recommendations.map(({ skill, lesson, challenge }) => <li key={skill}><span>{skill}</span><div className="recommendation-links"><Link href={`/learn/${lesson}`}>Materi</Link><Link href={`/challenges/${challenge}`}>Challenge →</Link></div></li>)}</ul> : <Link className="all-link" href="/challenges">Pilih challenge pertama →</Link>}</section></div>
       <div className="dashboard-columns"><section><h2 className="account-subheading">Materi selesai</h2>{completedModuleSlugs.size ? <ul className="dashboard-list">{[...completedModuleSlugs].map((slug) => <li key={slug}><Link href={`/learn/${slug}`}>{moduleNames.get(slug) ?? slug}</Link><span>Selesai</span></li>)}</ul> : <p className="account-empty">Belum ada materi yang ditandai selesai.</p>}</section>
         <section><h2 className="account-subheading">Materi berikutnya</h2>{remainingModules.length ? <ul className="dashboard-list">{remainingModules.slice(0, 5).map(([slug, title]) => <li key={slug}><Link href={`/learn/${slug}`}>{title}</Link><span>Belum selesai</span></li>)}</ul> : <p className="account-empty">Semua materi yang tersedia sudah selesai.</p>}</section></div>
-      <section><h2 className="account-subheading">Skor terbaik per challenge</h2>{bestScores.size ? <ul className="dashboard-list">{[...bestScores].map(([slug, score]) => <li key={slug}><Link href={`/challenges/${slug}`}>{challengeBySlug[slug] ?? dynamicChallenges.find((item) => item.slug === slug)?.title ?? slug}</Link><strong>{score}/100</strong></li>)}</ul> : <p className="account-empty">Belum ada quiz tersimpan. <Link className="auth-switch" href="/challenges">Mulai challenge →</Link></p>}</section>
-      <section><h2 className="account-subheading">Riwayat quiz</h2>{attempts.length ? <div className="attempt-list">{attempts.slice(0, 30).map((attempt) => <article className="attempt-row" key={attempt.id}><div><strong>{challengeBySlug[attempt.challenge_slug] ?? dynamicChallenges.find((item) => item.slug === attempt.challenge_slug)?.title ?? attempt.challenge_slug}</strong><small>{new Date(attempt.created_at).toLocaleString("id-ID")}</small></div><span>{attempt.correct_answers}/{attempt.total_questions} benar · {attempt.score}/100</span></article>)}</div> : <p className="account-empty">Belum ada hasil yang tersimpan.</p>}</section>
+      <section><h2 className="account-subheading">Skor terbaik per challenge</h2>{bestScores.size ? <ul className="dashboard-list">{[...bestScores].map(([slug, score]) => <li key={slug}><Link href={`/challenges/${slug}`}>{challengeBySlug[slug] ?? dynamicChallenges.find((item) => item.slug === slug)?.title ?? slug}</Link><strong>{score}/100</strong></li>)}</ul> : <p className="account-empty">Belum ada quiz AI literacy tersimpan. <Link className="auth-switch" href="/challenges">Mulai challenge →</Link></p>}</section>
+      <section><h2 className="account-subheading">Riwayat quiz AI literacy</h2>{literacyAttempts.length ? <div className="attempt-list">{literacyAttempts.slice(0, 30).map((attempt) => <article className="attempt-row" key={attempt.id}><div><strong>{challengeBySlug[attempt.challenge_slug] ?? dynamicChallenges.find((item) => item.slug === attempt.challenge_slug)?.title ?? attempt.challenge_slug}</strong><small>{new Date(attempt.created_at).toLocaleString("id-ID")}</small></div><span>{attempt.correct_answers}/{attempt.total_questions} benar · {attempt.score}/100</span></article>)}</div> : <p className="account-empty">Belum ada hasil quiz AI literacy yang tersimpan.</p>}{excludedAttemptCount > 0 && <p className="account-note">{excludedAttemptCount} percobaan lama atau tanpa pemetaan skill AI literacy tidak dihitung di profil ini. Datanya tetap tersimpan di Supabase.</p>}</section>
       <div className="account-actions"><Link className="btn btn-main" href="/challenges">Lanjutkan belajar</Link><Link className="all-link" href="/pricing">Lihat paket yang tersedia →</Link></div>
       <p className="account-note">Progress dan riwayat berasal dari data Supabase milik akun ini. Skor quiz adalah latihan, bukan sertifikasi.</p>
     </section>
