@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const slugPattern = /^custom-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const skills = new Set(["Prompting", "Critical Thinking", "Fact Checking", "AI Knowledge", "Practical Application"]);
+const maxQuestionsJsonLength = 50000;
 
 async function requireAdmin() {
   let supabase;
@@ -78,18 +79,29 @@ export async function saveChallenge(form: FormData) {
   const difficulty = field(form, "difficulty", 20);
   const moduleSlug = field(form, "module_slug", 100);
   if (!slugPattern.test(slug) || !title || !category || !description || !learningObjective || !["Pemula", "Menengah", "Lanjutan"].includes(difficulty)) backWithError("Data challenge tidak valid atau belum lengkap.");
+  // Do not use field(): its length cap slices strings, which can silently turn
+  // otherwise valid JSON into a truncated document before JSON.parse sees it.
+  const questionsValue = form.get("questions");
+  if (typeof questionsValue !== "string" || !questionsValue.trim()) backWithError("Isi soal dengan array JSON.");
+  if (questionsValue.length > maxQuestionsJsonLength) backWithError("JSON soal terlalu panjang (maksimum 50.000 karakter).");
   let questions: unknown;
-  try { questions = JSON.parse(field(form, "questions", 50000)); } catch { backWithError("Questions harus berupa JSON yang valid."); }
+  try { questions = JSON.parse(questionsValue); } catch { backWithError("Questions harus berupa JSON yang valid."); }
   if (!Array.isArray(questions) || questions.length < 1 || questions.length > 50) backWithError("Challenge harus memiliki 1–50 pertanyaan.");
   const validQuestions = questions.map((question) => {
     if (!question || typeof question !== "object") return null;
     const item = question as Record<string, unknown>;
-    if (typeof item.prompt !== "string" || !item.prompt.trim() || item.prompt.length > 2000 || typeof item.explanation !== "string" || !item.explanation.trim() || item.explanation.length > 3000 || typeof item.skill !== "string" || !skills.has(item.skill)) return null;
+    const skill = typeof item.skill === "string" ? item.skill.trim() : "";
+    if (typeof item.prompt !== "string" || !item.prompt.trim() || item.prompt.length > 2000 || typeof item.explanation !== "string" || !item.explanation.trim() || item.explanation.length > 3000 || !skills.has(skill)) return null;
     if (!Array.isArray(item.options) || item.options.length < 2 || item.options.length > 10 || !item.options.every((option) => typeof option === "string" && option.trim().length > 0 && option.length <= 1000)) return null;
-    if (!Number.isInteger(item.correctIndex) || (item.correctIndex as number) < 0 || (item.correctIndex as number) >= item.options.length) return null;
-    return { prompt: item.prompt.trim(), options: item.options.map((option: string) => option.trim()), correctIndex: item.correctIndex, explanation: item.explanation.trim(), skill: item.skill };
+    // The SQL RPC casts ->> 'correctIndex' to integer, so it accepts a JSON
+    // number or a digit string. Normalize both forms to a bounded integer here.
+    const correctIndex = typeof item.correctIndex === "string" && /^(0|[1-9]\d*)$/.test(item.correctIndex)
+      ? Number(item.correctIndex)
+      : item.correctIndex;
+    if (!Number.isSafeInteger(correctIndex) || (correctIndex as number) < 0 || (correctIndex as number) >= item.options.length) return null;
+    return { prompt: item.prompt.trim(), options: item.options.map((option: string) => option.trim()), correctIndex, explanation: item.explanation.trim(), skill };
   });
-  if (validQuestions.some((question) => question === null)) backWithError("Periksa prompt, opsi, correctIndex, explanation, dan skill setiap soal.");
+  if (validQuestions.some((question) => question === null)) backWithError("Soal tidak valid: isi prompt dan explanation, pilih skill yang tersedia, isi 2–10 opsi, dan gunakan correctIndex bilangan bulat mulai dari 0 yang menunjuk salah satu opsi.");
   const payload = { slug, title, category, description, learning_objective: learningObjective, difficulty, module_slug: moduleSlug || null, published: form.get("published") === "on", questions: validQuestions };
   try {
     const { error } = await supabase.rpc("admin_save_challenge", { p_payload: payload });

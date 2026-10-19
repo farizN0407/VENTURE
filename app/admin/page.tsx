@@ -85,7 +85,7 @@ function ChallengeForm({ challenge }: { challenge?: ChallengeRow }) {
     <label>Tingkat kesulitan<select name="difficulty" defaultValue={challenge?.difficulty ?? "Pemula"}><option>Pemula</option><option>Menengah</option><option>Lanjutan</option></select></label>
     <label>Slug materi terkait<input name="module_slug" defaultValue={challenge?.module_slug ?? ""} maxLength={100}/></label>
     <label>Soal (JSON)<textarea className="question-json" name="questions" required defaultValue={JSON.stringify(challenge ? questionData(challenge) : [{ prompt: "", options: ["", ""], correctIndex: 0, explanation: "", skill: "Prompting" }], null, 2)}/></label>
-    <p className="admin-help">Setiap soal membutuhkan <code>prompt</code>, <code>options</code>, <code>correctIndex</code>, <code>explanation</code>, dan skill: Prompting, Critical Thinking, Fact Checking, AI Knowledge, atau Practical Application.</p>
+    <p className="admin-help">Setiap soal membutuhkan <code>prompt</code>, <code>options</code> (2–10 teks), <code>correctIndex</code> (indeks mulai dari 0), <code>explanation</code>, dan skill: Prompting, Critical Thinking, Fact Checking, AI Knowledge, atau Practical Application. Tulis indeks sebagai angka, misalnya nilai <code>0</code>. JSON harus berupa array.</p>
     <label className="admin-checkbox"><input type="checkbox" name="published" defaultChecked={challenge?.published ?? false}/> Terbitkan challenge</label>
     <button className="btn btn-main" type="submit">Simpan challenge</button>
   </form>;
