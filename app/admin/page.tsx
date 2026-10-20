@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "@/app/auth/actions";
 import { deleteChallenge, deleteModule, saveChallenge, saveModule } from "@/app/admin/actions";
+import AdminSubmitButton from "@/app/admin/SubmitButton";
 
 type ModuleRow = { slug: string; title: string; summary: string; principle: string; example: string; practice: string; content_domain: string; challenge_slug: string | null; next_slug: string | null; published: boolean };
 type OptionRow = { id: string; position: number; body: string };
@@ -70,9 +71,10 @@ function ModuleForm({ action, module }: { action: (form: FormData) => void | Pro
     <label>Contoh praktis<textarea name="example" required defaultValue={module?.example} maxLength={5000}/></label>
     <label>Latihan praktik<textarea name="practice" required defaultValue={module?.practice} maxLength={5000}/></label>
     <label>Challenge terkait<input name="challenge_slug" defaultValue={module?.challenge_slug ?? ""} maxLength={100}/></label>
+    <p className="admin-help">Slug challenge harus sudah tersimpan dan memiliki domain yang sama. Simpan challenge terlebih dahulu, atau kosongkan jika belum tersedia.</p>
     <label>Materi berikutnya<input name="next_slug" defaultValue={module?.next_slug ?? ""} maxLength={100}/></label>
     <label className="admin-checkbox"><input type="checkbox" name="published" defaultChecked={module?.published ?? false}/> Terbitkan materi</label>
-    <button className="btn btn-main" type="submit">Simpan materi</button>
+    <AdminSubmitButton pendingText="Menyimpan materi…">Simpan materi</AdminSubmitButton>
   </form>;
 }
 
@@ -89,6 +91,6 @@ function ChallengeForm({ challenge }: { challenge?: ChallengeRow }) {
     <label>Soal (JSON)<textarea className="question-json" name="questions" required defaultValue={JSON.stringify(challenge ? questionData(challenge) : [{ prompt: "", options: ["", ""], correctIndex: 0, explanation: "", skill: "Prompting" }], null, 2)}/></label>
     <p className="admin-help">Setiap soal membutuhkan <code>prompt</code>, <code>options</code> (2–10 teks), <code>correctIndex</code> (indeks mulai dari 0), <code>explanation</code>, dan skill: Prompting, Critical Thinking, Fact Checking, AI Knowledge, atau Practical Application. Tulis indeks sebagai angka, misalnya nilai <code>0</code>. JSON harus berupa array.</p>
     <label className="admin-checkbox"><input type="checkbox" name="published" defaultChecked={challenge?.published ?? false}/> Terbitkan challenge</label>
-    <button className="btn btn-main" type="submit">Simpan challenge</button>
+    <AdminSubmitButton pendingText="Menyimpan challenge…">Simpan challenge</AdminSubmitButton>
   </form>;
 }

@@ -60,11 +60,43 @@ export async function saveModule(form: FormData) {
   for (const [relation, slug] of [["challenge", row.challenge_slug], ["materi berikutnya", row.next_slug]] as const) {
     if (!slug) continue;
     const table = relation === "challenge" ? "challenges" : "learning_modules";
-    const { data: related, error: relationError } = await supabase.from(table).select("content_domain").eq("slug", slug).maybeSingle();
-    if (relationError || !related || (related.content_domain !== row.content_domain && related.content_domain !== "unclassified")) backWithError(`Slug ${relation} harus ada dan menggunakan domain konten yang sama atau belum diklasifikasikan.`);
+    let related: { content_domain: string } | null = null;
+    try {
+      const result = await supabase.from(table).select("content_domain").eq("slug", slug).maybeSingle();
+      if (result.error) {
+        console.error(`Admin module ${relation} lookup failed`, { code: result.error.code, message: result.error.message });
+        backWithError(`Supabase gagal memeriksa slug ${relation} terkait. Periksa koneksi dan izin admin, lalu coba lagi.`);
+      }
+      related = result.data;
+    } catch (error) {
+      if (error && typeof error === "object" && "digest" in error && String(error.digest).startsWith("NEXT_REDIRECT")) throw error;
+      console.error(`Admin module ${relation} lookup request failed`, error);
+      backWithError(`Supabase tidak dapat memeriksa slug ${relation} terkait. Periksa koneksi lalu coba lagi.`);
+    }
+    if (!related) backWithError(`Slug ${relation} terkait belum ditemukan. Simpan ${relation} terlebih dahulu atau kosongkan field ini.`);
+    if (related.content_domain !== row.content_domain && related.content_domain !== "unclassified") {
+      backWithError(`Domain ${relation} terkait berbeda. Pilih konten dengan domain yang sama (${row.content_domain}) atau ubah domainnya terlebih dahulu.`);
+    }
   }
-  const { error } = await supabase.from("learning_modules").upsert(row, { onConflict: "slug" });
-  if (error) backWithError("Materi gagal disimpan. Periksa slug, database, dan kebijakan admin.");
+  try {
+    const { data, error } = await supabase.from("learning_modules").upsert(row, { onConflict: "slug" })
+      .select("slug,content_domain,published").single();
+    if (error) {
+      console.error("Admin module save failed", { code: error.code, message: error.message, details: error.details, hint: error.hint });
+      if (error.code === "42501" || /row-level security|permission denied/i.test(error.message)) backWithError("Supabase menolak penyimpanan materi. Pastikan akun memiliki role admin dan policy RLS admin aktif.");
+      if (error.code === "23514") backWithError("Data materi tidak memenuhi batasan database. Periksa slug, panjang isi, dan domain AI Literacy/Cybersecurity.");
+      if (error.code === "23503") backWithError("Relasi materi atau challenge tidak ditemukan. Simpan konten terkait terlebih dahulu.");
+      backWithError("Materi gagal disimpan oleh Supabase. Periksa domain, slug, dan log server untuk detail error.");
+    }
+    if (!data || data.slug !== row.slug || data.content_domain !== row.content_domain || data.published !== row.published) {
+      console.error("Admin module persistence verification mismatch", { slug: row.slug, saved: Boolean(data) });
+      backWithError("Supabase merespons tetapi materi belum dapat diverifikasi. Muat ulang daftar sebelum mencoba lagi.");
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error && String(error.digest).startsWith("NEXT_REDIRECT")) throw error;
+    console.error("Admin module save request failed", error);
+    backWithError("Materi belum tersimpan karena layanan Supabase tidak dapat dihubungi. Coba lagi setelah koneksi pulih.");
+  }
   redirect("/admin?saved=module");
 }
 
