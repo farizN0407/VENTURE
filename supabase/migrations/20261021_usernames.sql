@@ -35,7 +35,31 @@ begin
 end;
 $$;
 
+-- Reuse the existing trigger when it already targets this function. Repair it
+-- only if missing or attached to a different function; this never stacks copies.
+do $$
+declare
+  v_trigger_function oid;
+begin
+  select tgfoid into v_trigger_function
+  from pg_trigger
+  where tgrelid = 'auth.users'::regclass
+    and tgname = 'on_auth_user_created_promptly'
+    and not tgisinternal;
+
+  if v_trigger_function is distinct from 'public.handle_new_promptly_user()'::regprocedure::oid then
+    if v_trigger_function is not null then
+      execute 'drop trigger on_auth_user_created_promptly on auth.users';
+    end if;
+    execute 'create trigger on_auth_user_created_promptly after insert on auth.users for each row execute function public.handle_new_promptly_user()';
+  end if;
+end $$;
+
 alter table public.profiles enable row level security;
+drop policy if exists "Users can read own profile" on public.profiles;
+create policy "Users can read own profile" on public.profiles
+  for select to authenticated
+  using (auth.uid() = id);
 drop policy if exists "Users can update own profile" on public.profiles;
 drop policy if exists "Users can update own display name" on public.profiles;
 create policy "Users can update own display name" on public.profiles
@@ -43,7 +67,24 @@ create policy "Users can update own display name" on public.profiles
   using (auth.uid() = id)
   with check (auth.uid() = id);
 
-revoke all on public.profiles from anon, authenticated;
-revoke update (id, role, created_at) on public.profiles from anon, authenticated;
+revoke all on public.profiles from public, anon, authenticated;
+revoke update (id, role, created_at) on public.profiles from public, anon, authenticated;
 grant select on public.profiles to authenticated;
 grant update (display_name, username) on public.profiles to authenticated;
+
+create or replace function public.admin_profile_count()
+returns bigint language plpgsql stable security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_count bigint;
+begin
+  if not public.is_promptly_admin() then
+    raise exception 'Admin access required.' using errcode = '42501';
+  end if;
+  select count(*) into v_count from public.profiles;
+  return v_count;
+end;
+$$;
+revoke all on function public.admin_profile_count() from public, anon;
+grant execute on function public.admin_profile_count() to authenticated;

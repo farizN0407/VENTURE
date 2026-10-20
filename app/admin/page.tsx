@@ -35,10 +35,10 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   }
   if (profile?.role !== "admin") redirect("/account");
 
-  const [{ data: moduleData, error: modulesError }, { data: challengeData, error: challengesError }, { count: userCount }, { count: attemptCount }, { count: completionCount }] = await Promise.all([
+  const [{ data: moduleData, error: modulesError }, { data: challengeData, error: challengesError }, { data: userCount, error: userCountError }, { count: attemptCount }, { count: completionCount }] = await Promise.all([
     supabase.from("learning_modules").select("slug,title,summary,principle,example,practice,content_domain,challenge_slug,next_slug,published").order("updated_at", { ascending: false }),
     supabase.from("challenges").select("slug,title,category,description,learning_objective,difficulty,content_domain,module_slug,published,challenge_questions(id,position,prompt,skill,challenge_options(id,position,body),quiz_answer_keys(correct_option_id,explanation))").order("updated_at", { ascending: false }),
-    supabase.from("profiles").select("id", { count: "exact", head: true }),
+    supabase.rpc("admin_profile_count"),
     supabase.from("quiz_attempts").select("id", { count: "exact", head: true }),
     supabase.from("module_completions").select("user_id", { count: "exact", head: true }),
   ]);
@@ -52,7 +52,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     {query.error && <p className="auth-message auth-error" role="alert">{query.error}</p>}
     {query.saved && <p className="auth-message" role="status">Perubahan tersimpan: {query.saved}.</p>}
     {databaseError && <p className="auth-message auth-error" role="alert">Data admin belum dapat dimuat. Jalankan schema terbaru pada project Supabase.</p>}
-    <div className="stats-grid admin-stats"><article><small>AKUN TERDAFTAR</small><strong>{userCount ?? "—"}</strong><span>profil Supabase</span></article><article><small>PERCOBAAN QUIZ</small><strong>{attemptCount ?? "—"}</strong><span>hasil tersimpan</span></article><article><small>MATERI SELESAI</small><strong>{completionCount ?? "—"}</strong><span>aktivitas akun</span></article></div>
+    <div className="stats-grid admin-stats"><article><small>AKUN TERDAFTAR</small><strong>{userCountError ? "—" : userCount ?? "—"}</strong><span>profil Supabase</span></article><article><small>PERCOBAAN QUIZ</small><strong>{attemptCount ?? "—"}</strong><span>hasil tersimpan</span></article><article><small>MATERI SELESAI</small><strong>{completionCount ?? "—"}</strong><span>aktivitas akun</span></article></div>
     <section className="admin-section"><div className="head"><div><div className="label">LEARNING MODULES</div><h2>Materi</h2><p>Buat, edit, publikasikan, atau simpan sebagai draft.</p></div></div>
       <details className="admin-editor" open><summary>Tambah materi</summary><ModuleForm action={saveModule} /></details>
       {modules.map((module) => <details className="admin-editor" key={module.slug}><summary><span>{module.title}</span><small>{module.published ? "Terbit" : "Draft"} · {module.content_domain} · {module.slug}</small></summary><ModuleForm action={saveModule} module={module} /><form action={deleteModule} className="admin-delete"><input type="hidden" name="slug" value={module.slug}/><button className="text-button" type="submit">Hapus materi</button></form></details>)}

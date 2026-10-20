@@ -115,6 +115,8 @@ const schema = fs.readFileSync(path.join(root, "supabase/schema.sql"), "utf8");
 assert.match(schema, /quiz_attempts_user_attempt_id[\s\S]+?where attempt_id is not null/i, "completed user attempts are idempotent by unique user and attempt id");
 assert.match(schema, /profiles_only_one_admin[\s\S]+?where role = 'admin'/i, "the schema permits only one designated admin");
 assert.match(schema, /alter table public\.profiles enable row level security/i, "profile rows are protected by RLS");
+assert.match(schema, /create policy "Users can read own profile" on public\.profiles for select to authenticated using \(auth\.uid\(\)=id\)/i, "profile SELECT is limited to the signed-in user's row");
+assert.match(schema, /admin_profile_count\(\)[\s\S]+?if not public\.is_promptly_admin\(\)/i, "admin dashboard receives an aggregate count only after server-side role check");
 assert.match(schema, /create policy "Users can read own attempts"[\s\S]+?auth\.uid\(\)=user_id/i, "attempt history is scoped to the current user");
 assert.match(schema, /grant update \(display_name,username\) on public\.profiles to authenticated/i, "profile updates are limited to display name and username");
 assert.doesNotMatch(schema, /grant update \([^)]*\brole\b[^)]*\) on public\.profiles/i, "users cannot update their role column");

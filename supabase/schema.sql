@@ -156,6 +156,21 @@ $$;
 revoke all on function public.is_promptly_admin() from public;
 grant execute on function public.is_promptly_admin() to anon, authenticated;
 
+create or replace function public.admin_profile_count()
+returns bigint language plpgsql stable security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_count bigint;
+begin
+  if not public.is_promptly_admin() then raise exception 'Admin access required.' using errcode = '42501'; end if;
+  select count(*) into v_count from public.profiles;
+  return v_count;
+end;
+$$;
+revoke all on function public.admin_profile_count() from public,anon;
+grant execute on function public.admin_profile_count() to authenticated;
+
 create or replace function public.handle_new_promptly_user()
 returns trigger language plpgsql security definer
 set search_path = pg_catalog, public
@@ -375,7 +390,7 @@ drop policy if exists "Users can read options from published challenges" on publ
 drop policy if exists "Admins manage challenge options" on public.challenge_options;
 drop policy if exists "Admins manage answer keys" on public.quiz_answer_keys;
 
-create policy "Users can read own profile" on public.profiles for select to authenticated using (auth.uid()=id or public.is_promptly_admin());
+create policy "Users can read own profile" on public.profiles for select to authenticated using (auth.uid()=id);
 create policy "Users can update own display name" on public.profiles for update to authenticated using (auth.uid()=id) with check (auth.uid()=id);
 create policy "Admins manage modules" on public.learning_modules for all to authenticated using (public.is_promptly_admin()) with check (public.is_promptly_admin());
 create policy "Users can read public or admin modules" on public.learning_modules for select to anon,authenticated using ((published and content_domain='ai_literacy') or public.is_promptly_admin());
@@ -393,7 +408,8 @@ create policy "Users can update own completions" on public.module_completions fo
 create policy "Users can read own subscription" on public.subscriptions for select to authenticated using (auth.uid()=user_id or public.is_promptly_admin());
 
 revoke all on public.profiles,public.quiz_attempts,public.module_completions,public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys,public.subscriptions from anon,authenticated;
-revoke update (id,role,created_at) on public.profiles from anon,authenticated;
+revoke all on public.profiles from public,anon,authenticated;
+revoke update (id,role,created_at) on public.profiles from public,anon,authenticated;
 grant select on public.profiles,public.quiz_attempts,public.module_completions,public.subscriptions to authenticated;
 grant insert (user_id,module_slug),update (user_id,module_slug) on public.module_completions to authenticated;
 grant update (display_name,username) on public.profiles to authenticated;
