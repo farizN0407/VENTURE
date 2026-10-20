@@ -5,10 +5,22 @@
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
+  username text,
   role text not null default 'user' check (role in ('user', 'admin')),
   created_at timestamptz not null default now()
 );
 alter table public.profiles add column if not exists role text not null default 'user';
+alter table public.profiles add column if not exists username text;
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_username_format_check' and conrelid = 'public.profiles'::regclass
+  ) then
+    alter table public.profiles add constraint profiles_username_format_check
+      check (username is null or username ~ '^[a-z0-9][a-z0-9_]{2,23}$');
+  end if;
+end $$;
+create unique index if not exists profiles_username_lower_uidx on public.profiles (lower(username)) where username is not null;
 do $$ begin
   if not exists (
     select 1 from pg_constraint
@@ -148,9 +160,14 @@ create or replace function public.handle_new_promptly_user()
 returns trigger language plpgsql security definer
 set search_path = pg_catalog, public
 as $$
+declare
+  v_username text := lower(btrim(new.raw_user_meta_data->>'username'));
 begin
-  -- Ignore auth metadata supplied by a registrant; all signups receive user.
-  insert into public.profiles (id, role) values (new.id, 'user') on conflict (id) do nothing;
+  if v_username is null or v_username !~ '^[a-z0-9][a-z0-9_]{2,23}$' then
+    raise exception 'A valid username is required.' using errcode = '23514';
+  end if;
+  -- Only accept the validated username. Never trust a registrant-supplied role.
+  insert into public.profiles (id, role, username) values (new.id, 'user', v_username) on conflict (id) do nothing;
   return new;
 end;
 $$;
@@ -376,9 +393,10 @@ create policy "Users can update own completions" on public.module_completions fo
 create policy "Users can read own subscription" on public.subscriptions for select to authenticated using (auth.uid()=user_id or public.is_promptly_admin());
 
 revoke all on public.profiles,public.quiz_attempts,public.module_completions,public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys,public.subscriptions from anon,authenticated;
+revoke update (id,role,created_at) on public.profiles from anon,authenticated;
 grant select on public.profiles,public.quiz_attempts,public.module_completions,public.subscriptions to authenticated;
 grant insert (user_id,module_slug),update (user_id,module_slug) on public.module_completions to authenticated;
-grant update (display_name) on public.profiles to authenticated;
+grant update (display_name,username) on public.profiles to authenticated;
 grant select on public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options to anon,authenticated;
 grant select,insert,update,delete on public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys to authenticated;
 grant all on public.profiles,public.quiz_attempts,public.module_completions,public.learning_modules,public.challenges,public.challenge_questions,public.challenge_options,public.quiz_answer_keys,public.subscriptions to service_role;

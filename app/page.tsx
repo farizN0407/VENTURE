@@ -6,7 +6,7 @@ import QuickQuiz from "@/app/components/QuickQuiz";
 import { createClient } from "@/lib/supabase/server";
 import { calculateLiteracyProfile } from "@/lib/progress";
 import { getPublishedModules, getPublishedChallenges, type PublicChallenge } from "@/lib/content";
-import { signOut } from "@/app/auth/actions";
+import AccountMenu from "@/app/components/AccountMenu";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +14,13 @@ async function loadHomeProfile() {
  try {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { profile: calculateLiteracyProfile([]), signedIn: false, available: true };
+  if (!user) return { profile: calculateLiteracyProfile([]), signedIn: false, available: true, username: null, email: null };
+  const { data: accountProfile } = await supabase.from("profiles").select("username").eq("id", user.id).maybeSingle();
   const { data, error } = await supabase.from("quiz_attempts").select("content_domain,score,skill_results,answer_details").eq("user_id", user.id).eq("content_domain", "ai_literacy");
-  if (error) return { profile: calculateLiteracyProfile([]), signedIn: true, available: false };
-  return { profile: calculateLiteracyProfile(data ?? []), signedIn: true, available: true };
+  if (error) return { profile: calculateLiteracyProfile([]), signedIn: true, available: false, username: accountProfile?.username ?? null, email: user.email ?? null };
+  return { profile: calculateLiteracyProfile(data ?? []), signedIn: true, available: true, username: accountProfile?.username ?? null, email: user.email ?? null };
  } catch {
-  return { profile: calculateLiteracyProfile([]), signedIn: false, available: true };
+  return { profile: calculateLiteracyProfile([]), signedIn: false, available: true, username: null, email: null };
  }
 }
 
@@ -35,7 +36,7 @@ export default async function Home() {
  const homepageChallenges = [...challenges.map((challenge) => ({ slug: challenge.slug, title: challenge.title, category: challenge.category, description: challenge.description })), ...databaseChallenges.filter((challenge) => !challenges.some((item) => item.slug === challenge.slug))];
  return <>
   <div className="hero-shell"><div className="wrap"><header className="hero" id="top">
-   <nav className="nav" aria-label="Navigasi utama"><Link className="brand" href="/">promptly<b>.</b></Link><div className="navlinks"><a href="#challenges">Challenges</a><Link href="/learn">Materi</Link><a href="#how-it-works">Cara kerja</a><a href="#about">Tentang</a><Link href="/pricing">Paket</Link></div><div className="nav-account-actions">{homeProfile.signedIn ? <><Link className="nav-login" href="/account">Profil</Link><form action={signOut}><button className="nav-login nav-logout" type="submit">Keluar</button></form></> : <><Link className="nav-login" href="/login?next=%2F">Masuk</Link><Link className="nav-login" href="/register">Daftar</Link></>}</div><Link className="nav-cta" href="/challenges">Mulai challenge →</Link></nav>
+   <nav className="nav" aria-label="Navigasi utama"><Link className="brand" href="/">promptly<b>.</b></Link><div className="navlinks"><a href="#challenges">Challenges</a><Link href="/learn">Materi</Link><a href="#how-it-works">Cara kerja</a><a href="#about">Tentang</a><Link href="/pricing">Paket</Link></div><div className="nav-account-actions">{homeProfile.signedIn ? <AccountMenu username={homeProfile.username} email={homeProfile.email}/> : <><Link className="nav-login" href="/login?next=%2F">Masuk</Link><Link className="nav-login" href="/register">Daftar</Link></>}</div><Link className="nav-cta" href="/challenges">Mulai challenge →</Link></nav>
    <div className="hero-content"><div className="label">AI literacy untuk mahasiswa</div><h1>How smart are you with <span>AI?</span></h1><p>Belajar pakai AI dengan lebih cerdas, satu challenge singkat dalam satu waktu. Mulai dari cara menulis prompt yang jelas.</p><div className="buttons"><Link className="btn btn-main" href="/challenges">Mulai challenge pertama <b>↗</b></Link><a className="btn btn-alt" href="#challenges">Jelajahi challenge <b>→</b></a></div><div className="meta"><span><i><Clock3 size={13}/></i> 3–5 menit</span><span><i><BookOpenCheck size={13}/></i> Kuis interaktif</span><span><i><ChartNoAxesColumnIncreasing size={13}/></i> Skor AI</span></div></div>
    <div className="hero-picture" aria-hidden="true"><div className="hero-graphic">AI?</div></div>
   </header></div></div>
@@ -50,6 +51,6 @@ export default async function Home() {
   <section className="section pricing" id="pricing"><div className="wrap"><div className="head"><div><div className="label">Gratis untuk mulai</div><h2>Pilih cara belajarmu</h2><p>Semua materi dan challenge yang tersedia sekarang dapat dicoba gratis.</p></div><Link className="all-link" href="/pricing">Detail ketersediaan →</Link></div><div className="pricing-grid"><article className="plan"><h3>Free</h3><p>Fitur belajar Promptly saat ini.</p><div className="price">Rp0 <small>/ gratis</small></div><ul><li>{homepageLessons.length} materi singkat</li><li>{homepageChallenges.length} challenge</li><li>Feedback, penjelasan, dan skor</li><li>Penyimpanan hasil dengan akun Supabase saat dikonfigurasi</li></ul><Link className="btn btn-alt" href="/learn">Mulai belajar</Link></article><article className="plan featured"><span className="pill">BELUM TERSEDIA</span><h3>Promptly Pro</h3><p>Belum ada fitur berbayar yang aktif.</p><div className="price">— <small>/ belum dijual</small></div><ul><li>Tidak ada fitur Pro eksklusif aktif</li><li>Checkout dinonaktifkan</li><li>Semua konten belajar yang ada tetap gratis</li></ul><button className="btn btn-disabled" type="button" disabled>Checkout belum tersedia</button></article></div></div></section>
    <section className="badges-section" id="badges"><div className="wrap"><div className="head"><div><div className="label">Pencapaianmu</div><h2>Progress yang layak dirayakan.</h2><p>Badge bisa menjadi penanda skill yang sudah kamu latih.</p></div></div><div className="badges"><div className="badge"><b>First Challenge</b><span>Selesaikan challenge pertamamu</span></div><div className="badge"><b>Prompt Master</b><span>Tulis prompt yang jelas dan terarah</span></div><div className="badge"><b>Fact Checker</b><span>Periksa klaim dengan teliti</span></div><div className="badge"><b>Critical Thinker</b><span>Evaluasi jawaban AI</span></div><div className="badge"><b>AI Literacy Master</b><span>Kuasai semua kategori skill</span></div></div><div className="cta"><div><h2>Mulai belajar AI dengan lebih cerdas.</h2><p>Ambil challenge pertamamu dan lihat apa yang bisa kamu pelajari.</p></div><Link className="btn" href="/challenges">Mulai challenge <b>↗</b></Link></div></div></section>
   </main>
-  <footer><div className="wrap"><div className="foot-top"><div className="foot-brand"><Link className="brand" href="/">promptly<b>.</b></Link><p>Belajar menggunakan AI dengan lebih jelas, kritis, dan bertanggung jawab.</p></div><div className="foot-col"><strong>Menu</strong><Link href="/">Home</Link><Link href="/challenges">Challenges</Link>{homeProfile.signedIn ? <><Link href="/account">Akun</Link><form action={signOut}><button className="footer-logout" type="submit">Keluar</button></form></> : <><Link href="/login?next=%2F">Masuk</Link><Link href="/register">Daftar</Link></>}</div><div className="foot-col"><strong>Belajar</strong><Link href="/learn">Materi</Link><a href="#how-it-works">Cara kerja</a><a href="#about">Tentang Promptly</a><Link href="/pricing">Paket</Link></div><div className="foot-col"><strong>Kontak</strong><a href="mailto:halo@promptly.study">Contact</a></div></div><div className="copyright"><span>© 2026 Promptly</span><span>Belajar AI, satu challenge dalam satu waktu.</span></div></div></footer>
+  <footer><div className="wrap"><div className="foot-top"><div className="foot-brand"><Link className="brand" href="/">promptly<b>.</b></Link><p>Belajar menggunakan AI dengan lebih jelas, kritis, dan bertanggung jawab.</p></div><div className="foot-col"><strong>Menu</strong><Link href="/">Home</Link><Link href="/challenges">Challenges</Link>{!homeProfile.signedIn && <><Link href="/login?next=%2F">Masuk</Link><Link href="/register">Daftar</Link></>}</div><div className="foot-col"><strong>Belajar</strong><Link href="/learn">Materi</Link><a href="#how-it-works">Cara kerja</a><a href="#about">Tentang Promptly</a><Link href="/pricing">Paket</Link></div><div className="foot-col"><strong>Kontak</strong><a href="mailto:halo@promptly.study">Contact</a></div></div><div className="copyright"><span>© 2026 Promptly</span><span>Belajar AI, satu challenge dalam satu waktu.</span></div></div></footer>
  </>;
 }

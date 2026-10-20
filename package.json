@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test:browser": "node tools/browser-smoke.mjs",
+    "test:username": "node --experimental-strip-types tools/username-check.mjs",
+    "test:username:browser": "node tools/username-browser-check.mjs",
     "test:questions": "node tools/question-bank-check.mjs",
     "test:content-promotion": "node tools/content-promotion-check.mjs",
     "content:export": "node tools/promote-content.mjs export",

@@ -116,7 +116,8 @@ assert.match(schema, /quiz_attempts_user_attempt_id[\s\S]+?where attempt_id is n
 assert.match(schema, /profiles_only_one_admin[\s\S]+?where role = 'admin'/i, "the schema permits only one designated admin");
 assert.match(schema, /alter table public\.profiles enable row level security/i, "profile rows are protected by RLS");
 assert.match(schema, /create policy "Users can read own attempts"[\s\S]+?auth\.uid\(\)=user_id/i, "attempt history is scoped to the current user");
-assert.match(schema, /grant update \(display_name\) on public\.profiles to authenticated/i, "users cannot update their role column");
+assert.match(schema, /grant update \(display_name,username\) on public\.profiles to authenticated/i, "profile updates are limited to display name and username");
+assert.doesNotMatch(schema, /grant update \([^)]*\brole\b[^)]*\) on public\.profiles/i, "users cannot update their role column");
 assert.match(schema, /grant all on public\.profiles[\s\S]+?to service_role/i, "only the trusted server role receives elevated table privileges");
 assert.match(schema, /revoke all on public\.profiles[\s\S]+?from anon,authenticated/i, "public and signed-in clients cannot write protected progress rows directly");
 assert.match(schema, /revoke all on function public\.grade_quiz_question\(text,integer,integer\) from public,anon,authenticated,service_role/i, "legacy per-option grading RPC cannot reveal answers by repeated probing");

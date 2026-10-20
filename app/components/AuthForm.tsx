@@ -36,13 +36,16 @@ export default function AuthForm({
       {message && <p className="auth-message" role="status">{message}</p>}
       <form action={isLogin ? signIn : signUp} className="auth-form">
         <input type="hidden" name="next" value={next} />
+        {!isLogin && <label htmlFor="register-username">Username
+          <input id="register-username" type="text" name="username" autoComplete="nickname" autoCapitalize="none" spellCheck={false} required minLength={3} maxLength={24} pattern="[A-Za-z0-9][A-Za-z0-9_]{2,23}" aria-describedby="username-help" />
+        </label>}
         <label htmlFor={`${mode}-email`}>Email
           <input id={`${mode}-email`} type="email" name="email" autoComplete="email" required maxLength={254} />
         </label>
         <label htmlFor={`${mode}-password`}>Password
           <input id={`${mode}-password`} type="password" name="password" autoComplete={isLogin ? "current-password" : "new-password"} required minLength={8} />
         </label>
-        {!isLogin && <p className="auth-footnote">Gunakan minimal 8 karakter. Konfirmasi email dapat diperlukan sesuai pengaturan Supabase.</p>}
+        {!isLogin && <p className="auth-footnote" id="username-help">Username 3–24 karakter; gunakan huruf, angka, atau underscore. Username disimpan dalam huruf kecil dan harus unik. Password minimal 8 karakter. Konfirmasi email dapat diperlukan sesuai pengaturan Supabase.</p>}
         <SubmitButton mode={mode} />
       </form>
       <p className="auth-footnote">{isLogin ? "Belum punya akun?" : "Sudah punya akun?"} {" "}

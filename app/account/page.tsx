@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { signOut } from "@/app/auth/actions";
+import { updateUsername } from "@/app/auth/actions";
+import AccountMenu from "@/app/components/AccountMenu";
+import { usernameLabel } from "@/lib/username";
 import { challenges } from "@/lib/challenges";
 import { lessons } from "@/lib/learning";
 import { resolvePlan } from "@/lib/entitlements";
@@ -15,7 +17,8 @@ const nextBySkill: Record<string, { lesson: string; challenge: string }> = {
   "Practical Application": { lesson: "practical-application", challenge: "ai-in-real-life" },
 };
 
-export default async function AccountPage() {
+export default async function AccountPage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
+  const query = await searchParams;
   let supabase;
   try { supabase = await createClient(); } catch {
     return <main className="wrap section"><Link className="brand" href="/">promptly<b>.</b></Link><section className="account-panel"><div className="label">AKUN</div><h1 className="page-heading">Akun belum tersambung</h1><p>Autentikasi memerlukan URL dan publishable key Supabase. Penyimpanan progres juga memerlukan secret key server-side serta schema Promptly.</p><Link className="btn btn-main" href="/challenges">Lanjut ke challenge sebagai tamu</Link></section></main>;
@@ -23,11 +26,11 @@ export default async function AccountPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return <main className="wrap section"><Link className="brand" href="/">promptly<b>.</b></Link><section className="account-panel"><div className="label">AKUN</div><h1 className="page-heading">Masuk untuk melihat progres.</h1><p>Hasil quiz dan penyelesaian materi tersimpan hanya setelah kamu masuk dan Supabase siap. Challenge tetap bisa dicoba sebagai tamu.</p><div className="buttons"><Link className="btn btn-main" href="/login?next=%2Faccount">Masuk atau daftar</Link><Link className="btn btn-alt" href="/challenges">Lanjut sebagai tamu</Link></div></section></main>;
 
-  const [{ data: attemptsData, error: attemptsError }, { data: completionData, error: completionError }, { data: subscription, error: subscriptionError }, { data: profile }, { data: moduleData, error: moduleError }, { data: challengeData, error: challengeError }] = await Promise.all([
+  const [{ data: attemptsData, error: attemptsError }, { data: completionData, error: completionError }, { data: subscription, error: subscriptionError }, { data: loadedProfile, error: profileError }, { data: moduleData, error: moduleError }, { data: challengeData, error: challengeError }] = await Promise.all([
     supabase.from("quiz_attempts").select("id,challenge_slug,content_domain,score,correct_answers,total_questions,created_at,skill_results,answer_details").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1000),
     supabase.from("module_completions").select("module_slug,completed_at").eq("user_id", user.id),
     supabase.from("subscriptions").select("status,current_period_end").eq("user_id", user.id).maybeSingle(),
-    supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+    supabase.from("profiles").select("role,username").eq("id", user.id).maybeSingle(),
     supabase.from("learning_modules").select("slug,title").eq("published", true).eq("content_domain", "ai_literacy"),
     supabase.from("challenges").select("slug,title").eq("published", true).eq("content_domain", "ai_literacy"),
   ]);
@@ -58,11 +61,20 @@ export default async function AccountPage() {
   const isPro = resolvePlan(subscription) === "pro";
   const dataUnavailable = Boolean(attemptsError || completionError || subscriptionError || moduleError || challengeError);
   const remainingModules = [...moduleNames].filter(([slug]) => !completedModuleSlugs.has(slug));
+  let profile: { role?: string; username?: string | null } | null = loadedProfile;
+  if (profileError) {
+    const legacyProfile = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+    profile = legacyProfile.data;
+  }
+  const identity = usernameLabel(profile?.username, user.email);
 
   return <main className="wrap section">
-    <div className="account-header"><Link className="brand" href="/">promptly<b>.</b></Link><div className="account-top-actions">{profile?.role === "admin" && <Link className="all-link" href="/admin">Admin dashboard →</Link>}<form action={signOut}><button className="text-button" type="submit">Keluar</button></form></div></div>
+    <div className="account-header"><Link className="brand" href="/">promptly<b>.</b></Link><div className="account-top-actions">{profile?.role === "admin" && <Link className="all-link" href="/admin">Admin dashboard →</Link>}<AccountMenu username={profile?.username} email={user.email}/></div></div>
     <section className="account-panel dashboard-panel">
       <div className="label">DASHBOARD BELAJAR</div><h1 className="page-heading">Progress belajarmu</h1><p className="account-email">{user.email}</p>
+      {query.error && <p className="auth-message auth-error" role="alert">{query.error}</p>}
+      {query.saved === "username" && <p className="auth-message" role="status">Username berhasil diperbarui.</p>}
+      <section className="account-username-settings"><div><h2 className="account-subheading">Identitas akun</h2><p>Username saat ini: <strong>@{identity}</strong>. Username bersifat publik pada sapaan aplikasi; email tetap digunakan untuk login.</p></div><form action={updateUsername} className="username-form"><label htmlFor="account-username">Atur atau ganti username</label><div><span aria-hidden="true">@</span><input id="account-username" name="username" required minLength={3} maxLength={24} pattern="[A-Za-z0-9][A-Za-z0-9_]{2,23}" defaultValue={profile?.username ?? ""} autoComplete="nickname" aria-describedby="account-username-help"/><button className="btn btn-main" type="submit">Simpan username</button></div><small id="account-username-help">3–24 karakter; huruf, angka, dan underscore. Disimpan dalam huruf kecil.</small></form></section>
       {dataUnavailable && <p className="auth-message auth-error" role="alert">Sebagian data dashboard belum dapat dimuat. Periksa penerapan schema Promptly di Supabase, termasuk migrasi domain konten.</p>}
       <section className="profile account-literacy-profile"><div className="profile-title"><h2>AI Literacy Profile</h2><span className="level">{attemptsError ? "BELUM TERSEDIA" : literacyProfile.status.toUpperCase()}</span></div><div className="score"><div className="circle"><b>{attemptsError ? "—" : literacyProfile.overallScore ?? "—"}</b></div><div><small>SKOR KESELURUHAN</small><strong>{attemptsError ? "Progres belum dapat dimuat" : literacyProfile.status}</strong><small>{attemptsError ? "Periksa koneksi dan kebijakan Supabase" : `${literacyProfile.completedAttempts} quiz AI literacy selesai`}</small></div></div><p className="profile-method">Skor keseluruhan adalah rata-rata hasil quiz AI literacy yang tersimpan. Skor tiap skill dihitung dari jawaban per soal yang memiliki pemetaan skill tersebut. Skill yang belum diuji ditandai sebagai belum ada data.</p>{literacyProfile.skills.map((skill) => <div className="skill" key={skill.name}><span>{skill.name}</span><div className="bar"><i style={{ width: `${attemptsError ? 0 : skill.score ?? 0}%` }} /></div><em>{attemptsError ? "—" : skill.score === null ? "Belum ada data" : `${skill.score}%`}</em></div>)}</section>
       <div className="account-plan"><div><small>PAKET</small><strong>{isPro ? "Promptly Pro" : "Free"}</strong></div><span>{isPro ? `Aktif sampai ${new Date(periodEnd).toLocaleDateString("id-ID")}` : "Semua konten belajar yang ada tersedia gratis"}</span></div>

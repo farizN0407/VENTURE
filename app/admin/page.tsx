@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { signOut } from "@/app/auth/actions";
+import AccountMenu from "@/app/components/AccountMenu";
 import { deleteChallenge, deleteModule, saveChallenge, saveModule } from "@/app/admin/actions";
 import AdminSubmitButton from "@/app/admin/SubmitButton";
 
@@ -27,8 +27,13 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login?next=%2Fadmin");
-  const { data: profile, error: roleError } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (roleError || profile?.role !== "admin") redirect("/account");
+  const { data: loadedProfile, error: roleError } = await supabase.from("profiles").select("role,username").eq("id", user.id).maybeSingle();
+  let profile: { role?: string; username?: string | null } | null = loadedProfile;
+  if (roleError) {
+    const legacyProfile = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+    profile = legacyProfile.data;
+  }
+  if (profile?.role !== "admin") redirect("/account");
 
   const [{ data: moduleData, error: modulesError }, { data: challengeData, error: challengesError }, { count: userCount }, { count: attemptCount }, { count: completionCount }] = await Promise.all([
     supabase.from("learning_modules").select("slug,title,summary,principle,example,practice,content_domain,challenge_slug,next_slug,published").order("updated_at", { ascending: false }),
@@ -42,7 +47,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   const databaseError = modulesError || challengesError;
 
   return <main className="wrap section admin-page">
-    <div className="account-header"><Link className="brand" href="/">promptly<b>.</b></Link><div className="account-top-actions"><span className="account-email">{user.email}</span><Link className="text-button" href="/account">Kembali ke akun</Link><form action={signOut}><button className="text-button" type="submit">Keluar</button></form></div></div>
+    <div className="account-header"><Link className="brand" href="/">promptly<b>.</b></Link><div className="account-top-actions"><Link className="text-button" href="/account">Kembali ke akun</Link><AccountMenu username={profile?.username} email={user.email}/></div></div>
     <div className="admin-title"><div className="label">PROMPTLY CONTENT STUDIO</div><h1 className="page-heading">Dashboard admin</h1><p>Kelola materi dan challenge tersimpan di Supabase. Perubahan draft tidak tampil untuk pengguna biasa.</p></div>
     {query.error && <p className="auth-message auth-error" role="alert">{query.error}</p>}
     {query.saved && <p className="auth-message" role="status">Perubahan tersimpan: {query.saved}.</p>}
