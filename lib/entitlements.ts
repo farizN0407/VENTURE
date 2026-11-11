@@ -3,8 +3,8 @@ export type Plan = "free" | "pro";
 export type Feature = "published_learning" | "basic_quiz" | "basic_progress" | "advanced_analytics" | "personalized_recommendations" | "advanced_content";
 
 const freeFeatures = new Set<Feature>(["published_learning", "basic_quiz", "basic_progress"]);
-// Keep empty until a real Pro feature is implemented and protected end to end.
-const launchedProFeatures = new Set<Feature>();
+// Essay challenges are launched behind server-side subscription checks.
+const launchedProFeatures = new Set<Feature>(["advanced_content"]);
 
 export function resolvePlan(subscription: SubscriptionRecord, now = Date.now()): Plan {
   const end = subscription?.current_period_end ? Date.parse(subscription.current_period_end) : 0;
