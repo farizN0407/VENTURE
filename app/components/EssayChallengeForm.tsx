@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ESSAY_CHALLENGE, ESSAY_CRITERIA, ESSAY_MAX_LENGTH, ESSAY_MIN_LENGTH, type EssayAttemptRecord } from "@/lib/essay-challenge";
 
 export default function EssayChallengeForm({ initialAttempts }: { initialAttempts: EssayAttemptRecord[] }) {
@@ -8,6 +8,7 @@ export default function EssayChallengeForm({ initialAttempts }: { initialAttempt
   const [attempts, setAttempts] = useState(initialAttempts);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef<{ answer: string; id: string } | null>(null);
   const latest = attempts[0];
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -16,17 +17,19 @@ export default function EssayChallengeForm({ initialAttempts }: { initialAttempt
     const trimmed = answer.trim();
     if (trimmed.length < ESSAY_MIN_LENGTH) { setError(`Prompt harus berisi sedikitnya ${ESSAY_MIN_LENGTH} karakter.`); return; }
     if (trimmed.length > ESSAY_MAX_LENGTH) { setError(`Prompt tidak boleh lebih dari ${ESSAY_MAX_LENGTH} karakter.`); return; }
+    if (!requestIdRef.current || requestIdRef.current.answer !== trimmed) requestIdRef.current = { answer: trimmed, id: crypto.randomUUID() };
     setPending(true);
     try {
       const response = await fetch("/api/essay-challenges/submit", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challenge_slug: ESSAY_CHALLENGE.slug, answer: trimmed }),
+        body: JSON.stringify({ challenge_slug: ESSAY_CHALLENGE.slug, answer: trimmed, request_id: requestIdRef.current.id }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Essay tidak dapat dievaluasi.");
       if (!data.attempt || typeof data.attempt.id !== "string") throw new Error("Respons evaluasi tidak valid.");
       setAttempts((current) => [data.attempt as EssayAttemptRecord, ...current]);
       setAnswer("");
+      requestIdRef.current = null;
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "Essay tidak dapat dievaluasi. Coba lagi nanti.");
     } finally { setPending(false); }
@@ -49,7 +52,7 @@ export default function EssayChallengeForm({ initialAttempts }: { initialAttempt
     {latest && <section className="essay-result" aria-live="polite">
       <div className="essay-result-heading"><div><div className="label">HASIL EVALUASI</div><h2>Skor kamu</h2></div><strong className="essay-total">{latest.total_score}<small>/100</small></strong></div>
       <div className="essay-criteria">{ESSAY_CRITERIA.map(({ key, label }) => <article className="essay-criterion" key={key}><div><strong>{label}</strong><b>{latest.criteria_scores[key].score}<small>/25</small></b></div><p>{latest.criteria_scores[key].feedback}</p></article>)}</div>
-      <div className="essay-feedback-grid"><div><h3>Kekuatan prompt</h3><ul>{latest.feedback.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3>Yang bisa diperbaiki</h3><ul>{latest.feedback.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
+      <div className="essay-feedback-grid"><div><h3>Kekuatan prompt</h3><ul>{latest.feedback.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3>Kelemahan yang ditemukan</h3><ul>{(latest.feedback.weaknesses?.length ? latest.feedback.weaknesses : ["Belum tersedia pada hasil evaluasi lama."]).map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3>Langkah perbaikan</h3><ul>{latest.feedback.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
       <div className="essay-improved"><h3>Contoh prompt yang lebih baik</h3><p>{latest.feedback.improvedPrompt}</p></div>
     </section>}
     <section className="essay-history"><div className="head"><div><div className="label">PROGRESMU</div><h2>Riwayat pengerjaan</h2></div></div>{attempts.length ? <div className="attempt-list">{attempts.map((attempt) => <article className="attempt-row" key={attempt.id}><div><strong>{ESSAY_CHALLENGE.title}</strong><small>{new Date(attempt.submitted_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</small></div><span>{attempt.total_score}/100</span></article>)}</div> : <p className="account-empty">Belum ada percobaan. Kirim prompt pertamamu untuk melihat hasilnya di sini.</p>}</section>

@@ -51,34 +51,55 @@ export async function POST(request: Request) {
   if (!access.allowed) return NextResponse.json({ error: "Essay Challenge tersedia untuk akun Promptly Pro." }, { status: 403 });
   if (!process.env.OPENAI_API_KEY) return NextResponse.json({ error: "Evaluasi AI belum dikonfigurasi. Hubungi administrator." }, { status: 503 });
 
-  const { data: quota, error: quotaError } = await supabase.rpc("consume_promptly_essay_attempt");
+  let admin;
+  try { admin = createAdminClient(); }
+  catch { return NextResponse.json({ error: "Penyimpanan hasil belum dikonfigurasi." }, { status: 503 }); }
+
+  const { data: quotaStatus, error: quotaError } = await supabase.rpc("reserve_promptly_essay_attempt", { p_request_id: submission.requestId });
   if (quotaError) {
-    if (quotaError.code === "42501") return NextResponse.json({ error: "Akses Promptly Pro belum terverifikasi." }, { status: 403 });
+    if (quotaError.code === "42501") return NextResponse.json({ error: "Akses Promptly Pro atau migrasi kuota belum terverifikasi." }, { status: 403 });
     return NextResponse.json({ error: "Batas penggunaan essay belum dapat diverifikasi. Pastikan migrasi essay sudah dijalankan." }, { status: 503 });
   }
-  if (quota === "daily_limit") return NextResponse.json({ error: "Batas 3 evaluasi per hari tercapai. Silakan kembali besok." }, { status: 429 });
-  if (quota === "rate_limited") return NextResponse.json({ error: "Tunggu 30 detik sebelum mengirim prompt berikutnya." }, { status: 429 });
-  if (quota !== "allowed") return NextResponse.json({ error: "Batas penggunaan essay mengembalikan status yang tidak dikenal." }, { status: 503 });
+  if (quotaStatus === "daily_limit") return NextResponse.json({ error: "Batas 3 evaluasi berhasil per hari tercapai. Silakan kembali besok." }, { status: 429 });
+  if (quotaStatus === "rate_limited") return NextResponse.json({ error: "Tunggu 30 detik sebelum mengirim evaluasi berikutnya." }, { status: 429 });
+  if (quotaStatus === "in_progress") return NextResponse.json({ error: "Permintaan yang sama sedang diproses. Tunggu sebentar lalu coba lagi." }, { status: 409 });
+  if (quotaStatus === "already_succeeded") {
+    const { data: saved, error: lookupError } = await supabase.from("essay_attempts")
+      .select("id,answer,criteria_scores,total_score,feedback,submitted_at")
+      .eq("user_id", user.id).eq("request_id", submission.requestId).single();
+    if (lookupError || !saved) return NextResponse.json({ error: "Hasil sebelumnya sudah diproses tetapi belum dapat dimuat." }, { status: 503 });
+    return NextResponse.json({ attempt: saved });
+  }
+  if (quotaStatus !== "reserved") return NextResponse.json({ error: "Reservasi penggunaan essay mengembalikan status yang tidak dikenal." }, { status: 503 });
 
   let evaluation;
   try { evaluation = await evaluateEssayPrompt(submission.answer); }
   catch (error) {
+    const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", { p_user_id: user.id, p_request_id: submission.requestId });
+    if (releaseError) console.error("Essay quota release failed", { code: releaseError.code });
     const message = error instanceof Error ? error.message : "Evaluasi AI gagal. Coba lagi nanti.";
     const status = /belum dikonfigurasi/i.test(message) ? 503 : 502;
     return NextResponse.json({ error: message }, { status });
   }
 
-  let admin;
-  try { admin = createAdminClient(); }
-  catch { return NextResponse.json({ error: "Penyimpanan hasil belum dikonfigurasi. Hasil evaluasi tidak disimpan." }, { status: 503 }); }
-  const { data: saved, error: saveError } = await admin.from("essay_attempts").insert({
-    user_id: user.id,
-    challenge_slug: ESSAY_CHALLENGE.slug,
-    answer: submission.answer,
-    criteria_scores: evaluation.criteria,
-    total_score: evaluation.totalScore,
-    feedback: { strengths: evaluation.strengths, improvements: evaluation.improvements, improvedPrompt: evaluation.improvedPrompt },
-  }).select("id,answer,criteria_scores,total_score,feedback,submitted_at").single();
-  if (saveError || !saved) return NextResponse.json({ error: "Evaluasi selesai, tetapi hasil belum tersimpan. Coba lagi nanti." }, { status: 503 });
+  const { data: attemptId, error: finalizeError } = await admin.rpc("finalize_promptly_essay_attempt", {
+    p_user_id: user.id,
+    p_request_id: submission.requestId,
+    p_challenge_slug: ESSAY_CHALLENGE.slug,
+    p_answer: submission.answer,
+    p_criteria_scores: evaluation.criteria,
+    p_total_score: evaluation.totalScore,
+    p_feedback: { strengths: evaluation.strengths, weaknesses: evaluation.weaknesses, improvements: evaluation.improvements, improvedPrompt: evaluation.improvedPrompt },
+  });
+  if (finalizeError || !attemptId) {
+    const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", { p_user_id: user.id, p_request_id: submission.requestId });
+    if (releaseError) console.error("Essay quota release after save failure failed", { code: releaseError.code });
+    console.error("Essay attempt finalization failed", { code: finalizeError?.code });
+    return NextResponse.json({ error: "Evaluasi selesai, tetapi hasil belum tersimpan. Kuota dilepas bila penyimpanan belum berhasil; coba lagi dengan permintaan yang sama." }, { status: 503 });
+  }
+  const { data: saved, error: lookupError } = await supabase.from("essay_attempts")
+    .select("id,answer,criteria_scores,total_score,feedback,submitted_at")
+    .eq("user_id", user.id).eq("request_id", submission.requestId).single();
+  if (lookupError || !saved) return NextResponse.json({ error: "Evaluasi tersimpan, tetapi hasil belum dapat dimuat. Kirim ulang permintaan yang sama untuk memuat hasilnya." }, { status: 503 });
   return NextResponse.json({ attempt: saved });
 }
