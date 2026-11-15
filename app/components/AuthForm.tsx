@@ -48,6 +48,7 @@ export default function AuthForm({
         {!isLogin && <p className="auth-footnote" id="username-help">Username 3–24 karakter; gunakan huruf, angka, atau underscore. Username disimpan dalam huruf kecil dan harus unik. Password minimal 8 karakter. Konfirmasi email dapat diperlukan sesuai pengaturan Supabase.</p>}
         <SubmitButton mode={mode} />
       </form>
+      {isLogin && <p className="auth-footnote"><Link className="auth-switch" href="/forgot-password">Lupa password?</Link></p>}
       <p className="auth-footnote">{isLogin ? "Belum punya akun?" : "Sudah punya akun?"} {" "}
         <Link className="auth-switch" href={isLogin ? `/register?next=${encodeURIComponent(next)}` : `/login?next=${encodeURIComponent(next)}`}>{isLogin ? "Daftar di sini" : "Masuk di sini"}</Link>
       </p>
