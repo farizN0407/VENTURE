@@ -43,12 +43,12 @@ export async function POST(request: Request) {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return NextResponse.json({ error: "Silakan login untuk mengerjakan Essay Challenge." }, { status: 401 });
 
-  const [{ data: profile, error: profileError }, { data: subscription, error: subscriptionError }] = await Promise.all([
-    supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+  const [{ data: isAdmin, error: adminError }, { data: subscription, error: subscriptionError }] = await Promise.all([
+    supabase.rpc("is_promptly_admin"),
     supabase.from("subscriptions").select("status,current_period_end").eq("user_id", user.id).maybeSingle(),
   ]);
-  if (profileError || subscriptionError) return NextResponse.json({ error: "Status akun Pro belum dapat diverifikasi. Coba lagi nanti." }, { status: 503 });
-  const access = resolveEssayAccess(profile?.role, subscription, process.env.PROMPTLY_ESSAY_ADMIN_TEST_ENABLED === "true");
+  if (adminError || subscriptionError) return NextResponse.json({ error: "Status akun Pro belum dapat diverifikasi. Coba lagi nanti." }, { status: 503 });
+  const access = resolveEssayAccess(isAdmin === true ? "admin" : "user", subscription, process.env.PROMPTLY_ESSAY_ADMIN_TEST_ENABLED === "true");
   if (!access.allowed) return NextResponse.json({ error: "Essay Challenge tersedia untuk akun Promptly Pro." }, { status: 403 });
   if (!process.env.OPENAI_API_KEY) return NextResponse.json({ error: "Evaluasi AI belum dikonfigurasi. Hubungi administrator." }, { status: 503 });
 
