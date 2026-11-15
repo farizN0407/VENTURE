@@ -34,12 +34,22 @@ $$;
 create table if not exists public.essay_attempt_reservations (
   user_id uuid not null references auth.users(id) on delete cascade,
   request_id uuid not null,
+  lease_token uuid not null default gen_random_uuid(),
   usage_date date not null,
   status text not null check (status in ('reserved', 'succeeded', 'released')),
   reserved_at timestamptz not null default now(),
   finalized_at timestamptz,
   primary key (user_id, request_id)
 );
+-- Also supports an installation that created the table before lease fencing was added.
+alter table public.essay_attempt_reservations
+  add column if not exists lease_token uuid;
+update public.essay_attempt_reservations
+set lease_token = gen_random_uuid()
+where lease_token is null;
+alter table public.essay_attempt_reservations
+  alter column lease_token set default gen_random_uuid(),
+  alter column lease_token set not null;
 create index if not exists essay_attempt_reservations_user_date_idx
   on public.essay_attempt_reservations (user_id, usage_date, status);
 
@@ -49,10 +59,13 @@ grant all on public.essay_attempt_reservations to service_role;
 
 -- The old function counted before evaluation. Keep it for migration compatibility but disable it.
 revoke all on function public.consume_promptly_essay_attempt() from public, anon, authenticated;
+-- The Pro helper uses fully qualified objects, so it does not need public in its definer search path.
+alter function public.is_promptly_pro() set search_path = pg_catalog;
 
-create or replace function public.reserve_promptly_essay_attempt(p_request_id uuid)
+drop function if exists public.reserve_promptly_essay_attempt(uuid);
+create function public.reserve_promptly_essay_attempt(p_request_id uuid, p_lease_token uuid)
 returns text language plpgsql security definer
-set search_path = pg_catalog, public
+set search_path = pg_catalog
 as $$
 declare
   v_user_id uuid := auth.uid();
@@ -65,6 +78,7 @@ declare
 begin
   if v_user_id is null then raise exception 'Authentication required.' using errcode = '42501'; end if;
   if p_request_id is null then raise exception 'Request ID required.' using errcode = '22023'; end if;
+  if p_lease_token is null then raise exception 'Lease token required.' using errcode = '22023'; end if;
 
   select role into v_role from public.profiles where id = v_user_id;
   if coalesce(v_role, 'user') <> 'admin' and not public.is_promptly_pro() then
@@ -107,11 +121,12 @@ begin
 
   if found and v_status = 'released' then
     update public.essay_attempt_reservations
-    set status = 'reserved', usage_date = current_date, reserved_at = now(), finalized_at = null
+    set status = 'reserved', usage_date = current_date, reserved_at = now(), finalized_at = null,
+        lease_token = p_lease_token
     where user_id = v_user_id and request_id = p_request_id;
   else
-    insert into public.essay_attempt_reservations (user_id, request_id, usage_date, status)
-    values (v_user_id, p_request_id, current_date, 'reserved');
+    insert into public.essay_attempt_reservations (user_id, request_id, lease_token, usage_date, status)
+    values (v_user_id, p_request_id, p_lease_token, current_date, 'reserved');
   end if;
   update public.essay_usage_limits
   set reserved = reserved + 1, last_attempt_at = now()
@@ -119,12 +134,13 @@ begin
   return 'reserved';
 end;
 $$;
-revoke all on function public.reserve_promptly_essay_attempt(uuid) from public, anon;
-grant execute on function public.reserve_promptly_essay_attempt(uuid) to authenticated;
+revoke all on function public.reserve_promptly_essay_attempt(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.reserve_promptly_essay_attempt(uuid, uuid) to authenticated;
 
-create or replace function public.release_promptly_essay_attempt(p_user_id uuid, p_request_id uuid)
+drop function if exists public.release_promptly_essay_attempt(uuid, uuid);
+create function public.release_promptly_essay_attempt(p_user_id uuid, p_request_id uuid, p_lease_token uuid)
 returns text language plpgsql security definer
-set search_path = pg_catalog, public
+set search_path = pg_catalog
 as $$
 declare
   v_usage_date date;
@@ -133,11 +149,16 @@ begin
   select usage_date into v_usage_date from public.essay_attempt_reservations
   where user_id = p_user_id and request_id = p_request_id;
   if not found then return 'not_found'; end if;
+  if p_lease_token is null then return 'stale_lease'; end if;
 
   perform 1 from public.essay_usage_limits
   where user_id = p_user_id and usage_date = v_usage_date for update;
   select status into v_status from public.essay_attempt_reservations
   where user_id = p_user_id and request_id = p_request_id for update;
+  if not exists (
+    select 1 from public.essay_attempt_reservations
+    where user_id = p_user_id and request_id = p_request_id and lease_token = p_lease_token
+  ) then return 'stale_lease'; end if;
   if v_status = 'succeeded' then return 'already_succeeded'; end if;
   if v_status = 'released' then return 'already_released'; end if;
 
@@ -148,12 +169,14 @@ begin
   return 'released';
 end;
 $$;
-revoke all on function public.release_promptly_essay_attempt(uuid, uuid) from public, anon, authenticated;
-grant execute on function public.release_promptly_essay_attempt(uuid, uuid) to service_role;
+revoke all on function public.release_promptly_essay_attempt(uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.release_promptly_essay_attempt(uuid, uuid, uuid) to service_role;
 
-create or replace function public.finalize_promptly_essay_attempt(
+drop function if exists public.finalize_promptly_essay_attempt(uuid, uuid, text, text, jsonb, integer, jsonb);
+create function public.finalize_promptly_essay_attempt(
   p_user_id uuid,
   p_request_id uuid,
+  p_lease_token uuid,
   p_challenge_slug text,
   p_answer text,
   p_criteria_scores jsonb,
@@ -161,19 +184,21 @@ create or replace function public.finalize_promptly_essay_attempt(
   p_feedback jsonb
 )
 returns uuid language plpgsql security definer
-set search_path = pg_catalog, public
+set search_path = pg_catalog
 as $$
 declare
   v_usage_date date;
   v_status text;
   v_attempt_id uuid;
   v_score_sum integer;
+  v_criteria_key_count integer;
   v_key text;
   v_score integer;
 begin
   select usage_date into v_usage_date from public.essay_attempt_reservations
   where user_id = p_user_id and request_id = p_request_id;
   if not found then raise exception 'Essay reservation not found.' using errcode = 'P0002'; end if;
+  if p_lease_token is null then raise exception 'Essay lease token is required.' using errcode = '22023'; end if;
 
   -- Every quota mutation locks the usage row before its reservation.
   perform 1 from public.essay_usage_limits
@@ -185,17 +210,28 @@ begin
     where user_id = p_user_id and request_id = p_request_id;
     return v_attempt_id;
   end if;
+  if not exists (
+    select 1 from public.essay_attempt_reservations
+    where user_id = p_user_id and request_id = p_request_id and lease_token = p_lease_token
+  ) then raise exception 'Essay reservation lease is stale.' using errcode = '55000'; end if;
   if v_status <> 'reserved' then raise exception 'Essay reservation is not active.' using errcode = '55000'; end if;
-  if p_challenge_slug <> 'academic-research-assistant'
-     or length(trim(p_answer)) < 20 or length(trim(p_answer)) > 5000
-     or jsonb_typeof(p_criteria_scores) <> 'object' or jsonb_object_length(p_criteria_scores) <> 4
-     or jsonb_typeof(p_feedback) <> 'object' then
+  if p_challenge_slug is distinct from 'academic-research-assistant'
+     or p_answer is null or length(trim(p_answer)) < 20 or length(trim(p_answer)) > 5000
+     or jsonb_typeof(p_criteria_scores) is distinct from 'object'
+     or jsonb_typeof(p_feedback) is distinct from 'object'
+     or p_total_score is null then
     raise exception 'Essay result payload is invalid.' using errcode = '22023';
+  end if;
+
+  select count(*)::integer into v_criteria_key_count
+  from jsonb_object_keys(p_criteria_scores);
+  if v_criteria_key_count <> 4 then
+    raise exception 'Essay result must contain exactly four criteria.' using errcode = '22023';
   end if;
 
   v_score_sum := 0;
   foreach v_key in array array['clarityInstructions','contextRelevance','outputStructure','accuracyResponsibleAI'] loop
-    if jsonb_typeof(p_criteria_scores->v_key) <> 'object'
+    if jsonb_typeof(p_criteria_scores->v_key) is distinct from 'object'
        or coalesce(p_criteria_scores->v_key->>'score', '') !~ '^[0-9]{1,2}$' then
       raise exception 'Essay criterion score is invalid.' using errcode = '22023';
     end if;
@@ -218,5 +254,5 @@ begin
   return v_attempt_id;
 end;
 $$;
-revoke all on function public.finalize_promptly_essay_attempt(uuid, uuid, text, text, jsonb, integer, jsonb) from public, anon, authenticated;
-grant execute on function public.finalize_promptly_essay_attempt(uuid, uuid, text, text, jsonb, integer, jsonb) to service_role;
+revoke all on function public.finalize_promptly_essay_attempt(uuid, uuid, uuid, text, text, jsonb, integer, jsonb) from public, anon, authenticated;
+grant execute on function public.finalize_promptly_essay_attempt(uuid, uuid, uuid, text, text, jsonb, integer, jsonb) to service_role;

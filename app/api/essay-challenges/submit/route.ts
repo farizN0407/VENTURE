@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -55,7 +56,12 @@ export async function POST(request: Request) {
   try { admin = createAdminClient(); }
   catch { return NextResponse.json({ error: "Penyimpanan hasil belum dikonfigurasi." }, { status: 503 }); }
 
-  const { data: quotaStatus, error: quotaError } = await supabase.rpc("reserve_promptly_essay_attempt", { p_request_id: submission.requestId });
+  // A fresh lease fences off an older AI call if its reservation expires and is retried.
+  const leaseToken = randomUUID();
+  const { data: quotaStatus, error: quotaError } = await supabase.rpc("reserve_promptly_essay_attempt", {
+    p_request_id: submission.requestId,
+    p_lease_token: leaseToken,
+  });
   if (quotaError) {
     if (quotaError.code === "42501") return NextResponse.json({ error: "Akses Promptly Pro atau migrasi kuota belum terverifikasi." }, { status: 403 });
     return NextResponse.json({ error: "Batas penggunaan essay belum dapat diverifikasi. Pastikan migrasi essay sudah dijalankan." }, { status: 503 });
@@ -75,7 +81,9 @@ export async function POST(request: Request) {
   let evaluation;
   try { evaluation = await evaluateEssayPrompt(submission.answer); }
   catch (error) {
-    const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", { p_user_id: user.id, p_request_id: submission.requestId });
+    const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", {
+      p_user_id: user.id, p_request_id: submission.requestId, p_lease_token: leaseToken,
+    });
     if (releaseError) console.error("Essay quota release failed", { code: releaseError.code });
     const message = error instanceof Error ? error.message : "Evaluasi AI gagal. Coba lagi nanti.";
     const status = /belum dikonfigurasi/i.test(message) ? 503 : 502;
@@ -85,6 +93,7 @@ export async function POST(request: Request) {
   const { data: attemptId, error: finalizeError } = await admin.rpc("finalize_promptly_essay_attempt", {
     p_user_id: user.id,
     p_request_id: submission.requestId,
+    p_lease_token: leaseToken,
     p_challenge_slug: ESSAY_CHALLENGE.slug,
     p_answer: submission.answer,
     p_criteria_scores: evaluation.criteria,
@@ -92,7 +101,9 @@ export async function POST(request: Request) {
     p_feedback: { strengths: evaluation.strengths, weaknesses: evaluation.weaknesses, improvements: evaluation.improvements, improvedPrompt: evaluation.improvedPrompt },
   });
   if (finalizeError || !attemptId) {
-    const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", { p_user_id: user.id, p_request_id: submission.requestId });
+    const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", {
+      p_user_id: user.id, p_request_id: submission.requestId, p_lease_token: leaseToken,
+    });
     if (releaseError) console.error("Essay quota release after save failure failed", { code: releaseError.code });
     console.error("Essay attempt finalization failed", { code: finalizeError?.code });
     return NextResponse.json({ error: "Evaluasi selesai, tetapi hasil belum tersimpan. Kuota dilepas bila penyimpanan belum berhasil; coba lagi dengan permintaan yang sama." }, { status: 503 });
