@@ -4,7 +4,7 @@ import {
   ESSAY_CHALLENGES, ESSAY_CRITERIA, getEssayChallenge, parseEssayEvaluation, parseEssaySubmission, resolveEssayAccess,
   parseEssayQuota,
 } from "../lib/essay-challenge.ts";
-import { buildEssayEvaluationSchema, evaluateEssayPrompt } from "../lib/essay-evaluator.ts";
+import { buildEssayEvaluationSchema, buildEssayScoringGuidance, evaluateEssayPrompt } from "../lib/essay-evaluator.ts";
 
 const requestId = "f121c834-d2b8-4e3e-8c0e-7a2825600021";
 assert.deepEqual(ESSAY_CHALLENGES.map(({ slug }) => slug), ["academic-research-assistant", "data-analysis-assistant", "professional-writing"]);
@@ -73,6 +73,51 @@ const low = parseEssayEvaluation({
 assert.equal(low.totalScore, 20, "a bare research summary request remains appropriately low");
 assert.deepEqual(Object.values(low.criteria).map(({ score }) => score), [5, 5, 5, 5]);
 assert.equal(low.totalScore, Object.values(low.criteria).reduce((sum, item) => sum + item.score, 0));
+
+const professionalWriting = getEssayChallenge("professional-writing");
+assert.ok(professionalWriting);
+assert.match(buildEssayScoringGuidance(professionalWriting), /equivalent natural phrasing/i);
+assert.match(buildEssayScoringGuidance(professionalWriting), /verbatim quote[\s\S]*never a paraphrase/i);
+function professionalWritingResult(prompt, quoteByRequirement, criterionScores) {
+  const requirementEvidence = Object.fromEntries(professionalWriting.requirements.map(({ key }) => {
+    const quote = quoteByRequirement[key];
+    return [key, quote ? { present: true, evidence: quote } : { present: false, evidence: "" }];
+  }));
+  const criteria = Object.fromEntries(ESSAY_CRITERIA.map(({ key }, index) => [key, { score: criterionScores[index], feedback: "The score reflects the submitted communication prompt." }]));
+  return parseEssayEvaluation({
+    criteria, requirementEvidence, strengths: ["The prompt sets a communication goal."],
+    weaknesses: ["Some directions could be clearer."], improvements: ["Add any missing task details."],
+    improvedPrompt: "Draft a professional message using the requested context and factual safeguards.",
+  }, prompt, professionalWriting);
+}
+
+const weakWritingPrompt = "Write a professional email.";
+const weakWriting = professionalWritingResult(weakWritingPrompt, {
+  draftEmailOrReport: "professional email",
+}, [24, 24, 24, 24]);
+assert.equal(weakWriting.totalScore, 26, "a prompt with no audience, purpose, structure, or factual safeguards remains capped at 26 even when raw AI scores are high");
+assert.equal(weakWriting.totalScore, Object.values(weakWriting.criteria).reduce((sum, item) => sum + item.score, 0));
+
+const intermediateWritingPrompt = "Draft a respectful email to my project supervisor asking to extend the report deadline by one week.";
+const intermediateWriting = professionalWritingResult(intermediateWritingPrompt, {
+  draftEmailOrReport: "Draft a respectful email",
+  specifiedAudience: "my project supervisor",
+  specifiedPurpose: "asking to extend the report deadline by one week",
+  appropriateTone: "respectful",
+}, [18, 18, 12, 10]);
+assert.ok(intermediateWriting.totalScore > 26 && intermediateWriting.totalScore < 80, "an intermediate prompt with alternate wording earns credit for evidence it explicitly contains");
+
+const strongWritingPrompt = "Draft a concise email to my project supervisor asking for an extra week to deliver the report. Keep it respectful and professional. Include a subject line, greeting, brief explanation, request, and sign-off. Do not invent dates or project facts; leave placeholders for details I have not supplied.";
+const strongWriting = professionalWritingResult(strongWritingPrompt, {
+  draftEmailOrReport: "Draft a concise email",
+  specifiedAudience: "my project supervisor",
+  specifiedPurpose: "asking for an extra week to deliver the report",
+  appropriateTone: "respectful and professional",
+  outputStructure: "subject line, greeting, brief explanation, request, and sign-off",
+  preventFabricatedFacts: "Do not invent dates or project facts; leave placeholders for details I have not supplied.",
+}, [23, 22, 23, 22]);
+assert.ok(strongWriting.totalScore >= 85, "a strong prompt with exact evidence for all requirements can score highly");
+assert.equal(strongWriting.totalScore, Object.values(strongWriting.criteria).reduce((sum, item) => sum + item.score, 0));
 
 const now = Date.now();
 assert.equal(resolveEssayAccess("user", null, false, now).allowed, false);
