@@ -26,7 +26,29 @@ const fullRequirementEvidence = {
 };
 const validEvaluation = { criteria: criterionScores, requirementEvidence: fullRequirementEvidence, totalScore: 86, strengths: ["Clear purpose"], weaknesses: ["No explicit citation safeguard"], improvements: ["Add source-grounding rules"], improvedPrompt: "A better prompt with detailed instructions." };
 assert.equal(parseEssayEvaluation(validEvaluation, validAnswer).totalScore, 86);
-assert.throws(() => parseEssayEvaluation({ ...validEvaluation, totalScore: 100 }, validAnswer), /total skor/);
+const mismatchedModelTotal = parseEssayEvaluation({ ...validEvaluation, totalScore: 1 }, validAnswer);
+assert.equal(mismatchedModelTotal.totalScore, 86, "regression: a model total that disagrees with its criterion sum must not reject valid feedback; the server computes the total");
+assert.equal(mismatchedModelTotal.totalScore, Object.values(mismatchedModelTotal.criteria).reduce((sum, item) => sum + item.score, 0));
+const normalizedFeedback = parseEssayEvaluation({
+  ...validEvaluation,
+  totalScore: -50,
+  criteria: Object.fromEntries(ESSAY_CRITERIA.map(({ key }) => [key, { score: 20, feedback: `  ${"Reason ".repeat(100)}  ` }])),
+  strengths: ["  Clear purpose  ", "   "],
+  weaknesses: ["  Missing a safeguard  "],
+  improvements: ["  State a source boundary  "],
+  improvedPrompt: `  ${"Use the paper. ".repeat(500)}  `,
+}, validAnswer);
+assert.equal(normalizedFeedback.totalScore, 80);
+assert.equal(normalizedFeedback.criteria.clarityInstructions.feedback.length, 600, "criterion feedback is trimmed and bounded before saving");
+assert.deepEqual(normalizedFeedback.strengths, ["Clear purpose"], "blank feedback items are filtered during normalization");
+assert.equal(normalizedFeedback.improvedPrompt.length, 5000, "example prompt is bounded to the application/history limit");
+const unicodeSafeFeedback = parseEssayEvaluation({
+  ...validEvaluation,
+  criteria: Object.fromEntries(ESSAY_CRITERIA.map(({ key }) => [key, { score: 20, feedback: `${"x".repeat(599)}😀tail\u0000` }])),
+}, validAnswer);
+assert.equal(unicodeSafeFeedback.criteria.clarityInstructions.feedback.length, 599, "text truncation does not split a surrogate pair");
+assert.doesNotMatch(unicodeSafeFeedback.criteria.clarityInstructions.feedback, /\u0000/, "persisted JSON feedback excludes PostgreSQL-incompatible NUL characters");
+assert.throws(() => parseEssayEvaluation({ ...validEvaluation, improvedPrompt: "   " }, validAnswer), /contoh prompt kosong/);
 assert.throws(() => parseEssayEvaluation({ ...validEvaluation, criteria: { ...criterionScores, clarityInstructions: { score: "20", feedback: "Bad type" } } }, validAnswer), /Skor atau feedback/);
 
 const bareAnswer = "Summarize this paper";
@@ -35,6 +57,7 @@ const lowEvaluation = { ...validEvaluation, criteria: { clarityInstructions: { s
 const lowResult = parseEssayEvaluation(lowEvaluation, bareAnswer);
 assert.equal(lowResult.totalScore, 20, "even an overgenerous model score for a bare request must be capped to 20");
 assert.deepEqual(Object.values(lowResult.criteria).map((item) => item.score), [5, 5, 5, 5]);
+assert.equal(lowResult.totalScore, Object.values(lowResult.criteria).reduce((sum, item) => sum + item.score, 0), "total is recalculated after caps");
 assert.match(lowResult.criteria.accuracyResponsibleAI.feedback, /invented citations and unsupported claims/);
 assert.ok(lowResult.weaknesses.length > 0 && lowResult.improvements.length > 0, "missing requirements must be explained and actionable");
 const middleAnswer = "Summarize this paper, identify the key findings, and explain its limitations. Use only the research paper as the source. Organize the response as a short summary followed by bullets.";
@@ -43,6 +66,14 @@ const middleEvaluation = { ...validEvaluation, criteria: { clarityInstructions: 
 assert.ok(parseEssayEvaluation(middleEvaluation, middleAnswer).totalScore >= 45 && parseEssayEvaluation(middleEvaluation, middleAnswer).totalScore <= 70, "partly complete prompts should remain in the intermediate band");
 const highEvaluation = { ...validEvaluation, criteria: { clarityInstructions: { score: 24, feedback: "All tasks are explicit." }, contextRelevance: { score: 22, feedback: "The paper is the source." }, outputStructure: { score: 23, feedback: "Separate sections are requested." }, accuracyResponsibleAI: { score: 24, feedback: "Both safeguards are explicit." } }, totalScore: 93 };
 assert.equal(parseEssayEvaluation(highEvaluation, validAnswer).totalScore, 93, "complete prompts may score high");
+for (const [name, result] of [
+  ["full", parseEssayEvaluation(validEvaluation, validAnswer)],
+  ["bare/capped", lowResult],
+  ["intermediate", parseEssayEvaluation(middleEvaluation, middleAnswer)],
+  ["comprehensive", parseEssayEvaluation(highEvaluation, validAnswer)],
+]) {
+  assert.equal(result.totalScore, Object.values(result.criteria).reduce((sum, item) => sum + item.score, 0), `${name} total must equal the final criteria after caps`);
+}
 assert.throws(() => parseEssayEvaluation(validEvaluation, "Summarize this paper"), /Bukti persyaratan tidak ditemukan/);
 for (const expected of ["0–5", "23–25", "summarize the research paper", "key findings", "research limitations", "fabricated citations", "unsupported claims", "not expected to provide", "Do not award points just for length"]) assert.ok(ESSAY_SCORING_GUIDANCE.includes(expected), `rubric guidance must include ${expected}`);
 
@@ -55,14 +86,18 @@ assert.equal(resolveEssayAccess("user", { status: "active", current_period_end: 
 
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.OPENAI_API_KEY;
+const structuredOutput = { ...validEvaluation };
+delete structuredOutput.totalScore;
 process.env.OPENAI_API_KEY = "test-placeholder-not-a-real-key";
 globalThis.fetch = async (_url, options) => {
   const requestBody = JSON.parse(options.body);
   assert.equal(requestBody.response_format.json_schema.strict, true);
+  assert.equal(requestBody.response_format.json_schema.schema.required.includes("totalScore"), false, "the model does not produce an aggregate score");
+  assert.equal(Object.hasOwn(requestBody.response_format.json_schema.schema.properties, "totalScore"), false);
   assert.match(requestBody.messages[0].content, /untrusted data/i);
   assert.match(requestBody.messages[0].content, /5–20 overall/i);
   assert.equal(JSON.parse(requestBody.messages[1].content).submitted_prompt, validAnswer);
-  return Response.json({ choices: [{ message: { content: JSON.stringify(validEvaluation) } }] });
+  return Response.json({ choices: [{ message: { content: JSON.stringify(structuredOutput) } }] });
 };
 assert.equal((await evaluateEssayPrompt(validAnswer)).totalScore, 86, "valid structured AI result should pass server validation");
 globalThis.fetch = async () => new Response("unavailable", { status: 503 });
@@ -118,6 +153,9 @@ assert.match(route, /finalize_promptly_essay_attempt/);
 assert.match(route, /p_user_id: user\.id/);
 assert.match(route, /p_request_id: submission\.requestId/);
 assert.match(route, /p_lease_token: leaseToken/g);
+assert.match(route, /p_criteria_scores: evaluation\.criteria/);
+assert.match(route, /p_total_score: evaluation\.totalScore/);
+assert.match(route, /p_feedback: \{ strengths: evaluation\.strengths, weaknesses: evaluation\.weaknesses, improvements: evaluation\.improvements, improvedPrompt: evaluation\.improvedPrompt \}/, "normalized feedback is sent as the JSON object expected by the database");
 assert.match(route, /randomUUID\(\)/);
 assert.match(route, /supabase\.rpc\("is_promptly_admin"\)/, "API admin access must use the canonical database role function");
 assert.doesNotMatch(route, /from\("profiles"\)\.select\("role"\)/, "API must not authorize admin from a directly selected editable profile field");
@@ -127,6 +165,7 @@ const evaluationPosition = route.indexOf("evaluateEssayPrompt(submission.answer)
 const finalizePosition = route.indexOf("finalize_promptly_essay_attempt");
 assert.ok(reservePosition >= 0 && reservePosition < evaluationPosition && evaluationPosition < finalizePosition, "the request must reserve, evaluate, then atomically finalize");
 assert.match(route.slice(evaluationPosition, finalizePosition), /release_promptly_essay_attempt/, "failed evaluation must release the reservation");
+assert.match(route.slice(route.indexOf("let evaluation"), finalizePosition), /catch \(error\)[\s\S]*?release_promptly_essay_attempt/, "invalid evaluator output must take the same quota-release path as provider failures");
 
 // Production hardening contract checks. These are source checks, not PostgreSQL integration tests.
 assert.match(hardeningMigration, /create or replace function public\.reserve_promptly_essay_attempt/i);

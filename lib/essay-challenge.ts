@@ -52,8 +52,34 @@ export function parseEssaySubmission(value: unknown): { challengeSlug: typeof ES
   return { challengeSlug: ESSAY_CHALLENGE.slug, answer, requestId: body.request_id };
 }
 
-function boundedText(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= max;
+function cleanFeedbackText(value: string, max: number): string {
+  let normalized = "";
+  for (const character of value.trim()) {
+    const code = character.charCodeAt(0);
+    const isUnpairedSurrogate = character.length === 1 && code >= 0xd800 && code <= 0xdfff;
+    if (character === "\u0000" || isUnpairedSurrogate) continue;
+    if (normalized.length + character.length > max) break;
+    normalized += character;
+  }
+  return normalized.trim();
+}
+
+function normalizeFeedbackText(value: unknown, max: number, label: string): string {
+  if (typeof value !== "string") throw new Error(`Feedback AI untuk ${label} tidak valid.`);
+  const normalized = cleanFeedbackText(value, max);
+  if (!normalized) throw new Error(`Feedback AI untuk ${label} kosong.`);
+  return normalized;
+}
+
+function normalizeFeedbackList(value: unknown, maxItemLength: number, label: string): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 5 || !value.every((item) => typeof item === "string")) {
+    throw new Error(`Daftar feedback AI untuk ${label} tidak valid.`);
+  }
+  const normalized = value
+    .map((item) => cleanFeedbackText(item as string, maxItemLength))
+    .filter(Boolean);
+  if (normalized.length === 0) throw new Error(`Daftar feedback AI untuk ${label} kosong.`);
+  return normalized;
 }
 
 export function parseEssayEvaluation(value: unknown, submittedPrompt: string): EssayEvaluation {
@@ -79,25 +105,23 @@ export function parseEssayEvaluation(value: unknown, submittedPrompt: string): E
   const rawCriteria = result.criteria as Record<string, unknown>;
   if (Object.keys(rawCriteria).length !== ESSAY_CRITERIA.length) throw new Error("Jumlah kriteria evaluasi tidak valid.");
   const criteria = {} as EssayEvaluation["criteria"];
-  let computedTotal = 0;
   for (const { key } of ESSAY_CRITERIA) {
     const item = rawCriteria[key];
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("AI mengembalikan kriteria yang tidak lengkap.");
     const criterion = item as Record<string, unknown>;
-    if (!Number.isInteger(criterion.score) || (criterion.score as number) < 0 || (criterion.score as number) > 25 || !boundedText(criterion.feedback, 600)) {
+    if (!Number.isInteger(criterion.score) || (criterion.score as number) < 0 || (criterion.score as number) > 25 || typeof criterion.feedback !== "string") {
       throw new Error("Skor atau feedback rubrik AI tidak valid.");
     }
-    criteria[key] = { score: criterion.score as number, feedback: criterion.feedback as string };
-    computedTotal += criterion.score as number;
+    criteria[key] = {
+      score: criterion.score as number,
+      feedback: normalizeFeedbackText(criterion.feedback, 600, `kriteria ${key}`),
+    };
   }
-  if (result.totalScore !== computedTotal || !Array.isArray(result.strengths) || !Array.isArray(result.weaknesses) || !Array.isArray(result.improvements) ||
-      result.strengths.length < 1 || result.weaknesses.length < 1 || result.improvements.length < 1 ||
-      result.strengths.length > 5 || result.weaknesses.length > 5 || result.improvements.length > 5 ||
-      !result.strengths.every((item) => boundedText(item, 400)) ||
-      !result.weaknesses.every((item) => boundedText(item, 400)) ||
-      !result.improvements.every((item) => boundedText(item, 400)) || !boundedText(result.improvedPrompt, 5000)) {
-    throw new Error("Feedback atau total skor AI tidak valid.");
-  }
+  // totalScore is derived below from the final capped criteria; never trust arithmetic supplied by the model.
+  const strengths = normalizeFeedbackList(result.strengths, 400, "strengths");
+  const weaknessesFromAI = normalizeFeedbackList(result.weaknesses, 400, "weaknesses");
+  const improvementsFromAI = normalizeFeedbackList(result.improvements, 400, "improvements");
+  const improvedPrompt = normalizeFeedbackText(result.improvedPrompt, 5000, "contoh prompt");
   const caps: Partial<Record<EssayCriterionKey, number>> = {};
   const requiredTaskKeys = ["summarizePaper", "identifyKeyFindings", "explainLimitations"] as const;
   const missingTaskKeys = requiredTaskKeys.filter((key) => !requirements[key].present);
@@ -137,15 +161,15 @@ export function parseEssayEvaluation(value: unknown, submittedPrompt: string): E
     outputStructure: "Request a clear structure for the summary, findings, and limitations.",
   };
   const missing = requirementKeys.filter((key) => !requirements[key].present);
-  const weaknesses = [...new Set([...missing.slice(0, 5).map((key) => missingRequirementFeedback[key]), ...(result.weaknesses as string[])])].slice(0, 5);
-  const improvements = [...new Set([...missing.slice(0, 5).map((key) => missingRequirementFeedback[key]), ...(result.improvements as string[])])].slice(0, 5);
+  const weaknesses = [...new Set([...missing.slice(0, 5).map((key) => missingRequirementFeedback[key]), ...weaknessesFromAI])].slice(0, 5);
+  const improvements = [...new Set([...missing.slice(0, 5).map((key) => missingRequirementFeedback[key]), ...improvementsFromAI])].slice(0, 5);
   return {
     criteria: cappedCriteria,
     totalScore: Object.values(cappedCriteria).reduce((sum, item) => sum + item.score, 0),
-    strengths: result.strengths as string[],
+    strengths,
     weaknesses,
     improvements,
-    improvedPrompt: result.improvedPrompt,
+    improvedPrompt,
   };
 }
 
