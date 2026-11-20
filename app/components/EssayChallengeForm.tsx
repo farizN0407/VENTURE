@@ -1,11 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ESSAY_CRITERIA, ESSAY_MAX_LENGTH, ESSAY_MIN_LENGTH, type EssayAttemptRecord, type EssayChallenge } from "@/lib/essay-challenge";
+import { ESSAY_CRITERIA, ESSAY_MAX_LENGTH, ESSAY_MIN_LENGTH, parseEssayQuota, type EssayAttemptRecord, type EssayChallenge, type EssayQuota } from "@/lib/essay-challenge";
 
-export default function EssayChallengeForm({ challenge, initialAttempts }: { challenge: EssayChallenge; initialAttempts: EssayAttemptRecord[] }) {
+export default function EssayChallengeForm({ challenge, initialAttempts, initialQuota }: { challenge: EssayChallenge; initialAttempts: EssayAttemptRecord[]; initialQuota: EssayQuota | null }) {
   const [answer, setAnswer] = useState("");
   const [attempts, setAttempts] = useState(initialAttempts);
+  const [quota, setQuota] = useState(initialQuota);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef<{ answer: string; id: string } | null>(null);
@@ -25,6 +26,7 @@ export default function EssayChallengeForm({ challenge, initialAttempts }: { cha
         body: JSON.stringify({ challenge_slug: challenge.slug, answer: trimmed, request_id: requestIdRef.current.id }),
       });
       const data = await response.json();
+      if ("quota" in data) setQuota(parseEssayQuota(data.quota));
       if (!response.ok) throw new Error(data.error || "Essay tidak dapat dievaluasi.");
       if (!data.attempt || typeof data.attempt.id !== "string") throw new Error("Respons evaluasi tidak valid.");
       setAttempts((current) => [data.attempt as EssayAttemptRecord, ...current]);
@@ -37,16 +39,16 @@ export default function EssayChallengeForm({ challenge, initialAttempts }: { cha
 
   return <>
     <section className="essay-panel">
-      <div className="label">TANTANGAN PROMPTING · PROMPTLY PRO</div>
+      <div className="label">TANTANGAN MENULIS PROMPT · PROMPTLY PRO</div>
       <h1 className="essay-title">{challenge.title}</h1>
       <p className="essay-instructions">{challenge.instructions}</p>
       <form className="essay-form" onSubmit={submit}>
         <label htmlFor="essay-answer">Tulis prompt kamu sendiri</label>
-        <textarea id="essay-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} maxLength={ESSAY_MAX_LENGTH} minLength={ESSAY_MIN_LENGTH} required disabled={pending} placeholder="Contoh: You are an academic research assistant…" />
+        <textarea id="essay-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} maxLength={ESSAY_MAX_LENGTH} minLength={ESSAY_MIN_LENGTH} required disabled={pending} placeholder="Tulis instruksi AI yang jelas dan sesuai dengan tantangan…" />
         <div className="essay-form-meta"><span>{answer.length}/{ESSAY_MAX_LENGTH} karakter</span><span>Minimum {ESSAY_MIN_LENGTH} karakter</span></div>
         {error && <p className="auth-message auth-error" role="alert">{error}</p>}
         <button className="btn btn-main" type="submit" disabled={pending}>{pending ? "Sedang mengevaluasi…" : "Evaluasi prompt"}</button>
-        <p className="essay-note">Maksimal 3 evaluasi per hari, dengan jeda 30 detik. Hasil tersimpan ke akunmu.</p>
+        <p className="essay-note">{quota ? `Kuota hari ini: ${quota.successfulAttempts}/${quota.dailyLimit} evaluasi berhasil (semua challenge digabung).` : "Kuota hari ini belum dapat dimuat."} Jeda antarpercobaan 30 detik. Hasil tersimpan ke akunmu.</p>
       </form>
     </section>
     {latest && <section className="essay-result" aria-live="polite">

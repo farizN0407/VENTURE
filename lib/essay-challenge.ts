@@ -129,6 +129,25 @@ export type EssayAttemptRecord = {
   feedback: Pick<EssayEvaluation, "strengths" | "improvements" | "improvedPrompt"> & { weaknesses?: string[] };
   submitted_at: string;
 };
+export type EssayQuota = { successfulAttempts: number; reservedAttempts: number; dailyLimit: 3 | 15 };
+
+export function parseEssayQuota(value: unknown): EssayQuota | null {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (!row || typeof row !== "object") return null;
+  const quota = row as Record<string, unknown>;
+  const successfulAttempts = quota.successful_attempts ?? quota.successfulAttempts;
+  const reservedAttempts = quota.reserved_attempts ?? quota.reservedAttempts;
+  const dailyLimit = quota.daily_limit ?? quota.dailyLimit;
+  if (!Number.isInteger(successfulAttempts) || !Number.isInteger(reservedAttempts) ||
+      !Number.isInteger(dailyLimit) || (dailyLimit !== 3 && dailyLimit !== 15) ||
+      (successfulAttempts as number) < 0 || (successfulAttempts as number) > dailyLimit ||
+      (reservedAttempts as number) < 0 || (reservedAttempts as number) > dailyLimit) return null;
+  return {
+    successfulAttempts: successfulAttempts as number,
+    reservedAttempts: reservedAttempts as number,
+    dailyLimit: dailyLimit as 3 | 15,
+  };
+}
 
 export function getEssayChallenge(slug: unknown): (typeof ESSAY_CHALLENGES)[number] | undefined {
   return typeof slug === "string" ? ESSAY_CHALLENGES.find((challenge) => challenge.slug === slug) : undefined;
@@ -226,5 +245,6 @@ export function parseEssayEvaluation(value: unknown, submittedPrompt: string, ch
 export function resolveEssayAccess(role: string | null | undefined, subscription: SubscriptionRecord, adminTestEnabled: boolean, now = Date.now()) {
   const isAdminTest = role === "admin" && adminTestEnabled;
   const isPro = canAccessFeature("advanced_content", resolvePlan(subscription, now));
-  return { allowed: isAdminTest || isPro, isAdminTest, isPro };
+  const isAdmin = role === "admin";
+  return { allowed: isAdmin || isPro, isAdminTest, isPro, isAdmin };
 }

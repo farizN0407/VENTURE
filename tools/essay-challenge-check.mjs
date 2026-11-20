@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   ESSAY_CHALLENGES, ESSAY_CRITERIA, getEssayChallenge, parseEssayEvaluation, parseEssaySubmission, resolveEssayAccess,
+  parseEssayQuota,
 } from "../lib/essay-challenge.ts";
 import { buildEssayEvaluationSchema, evaluateEssayPrompt } from "../lib/essay-evaluator.ts";
 
@@ -44,9 +45,12 @@ assert.equal(low.totalScore, Object.values(low.criteria).reduce((sum, item) => s
 
 const now = Date.now();
 assert.equal(resolveEssayAccess("user", null, false, now).allowed, false);
-assert.equal(resolveEssayAccess("admin", null, false, now).allowed, false);
+assert.equal(resolveEssayAccess("admin", null, false, now).allowed, true, "admin role grants access without Pro subscription or a UI test flag");
 assert.equal(resolveEssayAccess("admin", null, true, now).allowed, true);
 assert.equal(resolveEssayAccess("user", { status: "active", current_period_end: new Date(now + 60_000).toISOString() }, false, now).allowed, true);
+assert.deepEqual(parseEssayQuota([{ successful_attempts: 2, reserved_attempts: 1, daily_limit: 3 }]), { successfulAttempts: 2, reservedAttempts: 1, dailyLimit: 3 });
+assert.deepEqual(parseEssayQuota({ successfulAttempts: 4, reservedAttempts: 0, dailyLimit: 15 }), { successfulAttempts: 4, reservedAttempts: 0, dailyLimit: 15 });
+assert.equal(parseEssayQuota({ successful_attempts: 4, reserved_attempts: 0, daily_limit: 3 }), null, "quota display rejects inconsistent or forged values");
 
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.OPENAI_API_KEY;
@@ -81,6 +85,7 @@ const challengeMigration = await readFile(new URL("../supabase/migrations/202611
 const quotaMigration = await readFile(new URL("../supabase/migrations/20261115_essay_quota_reservations.sql", import.meta.url), "utf8");
 const hardeningMigration = await readFile(new URL("../supabase/migrations/20261115120000_essay_quota_hardening.sql", import.meta.url), "utf8");
 const expansionMigration = await readFile(new URL("../supabase/migrations/20261120120000_promptly_essay_challenges_expand.sql", import.meta.url), "utf8");
+const adminQuotaMigration = await readFile(new URL("../supabase/migrations/20261120150000_promptly_admin_essay_quota.sql", import.meta.url), "utf8");
 assert.match(challengeMigration, /alter table public\.essay_attempts enable row level security/i);
 assert.match(challengeMigration, /auth\.uid\(\) = user_id/i);
 assert.match(quotaMigration, /attempts \+ v_reserved >= 3/i);
@@ -102,6 +107,25 @@ assert.match(expansionMigration, /where slug = p_challenge_slug and published = 
 assert.match(expansionMigration, /revoke all on function public\.finalize_promptly_essay_attempt[\s\S]*from public, anon, authenticated/i);
 assert.match(expansionMigration, /grant execute on function public\.finalize_promptly_essay_attempt[\s\S]*to service_role/i);
 assert.doesNotMatch(expansionMigration, /\b(drop table|delete from|truncate)\b/i);
+assert.match(adminQuotaMigration, /drop constraint if exists essay_usage_limits_attempts_check/i);
+assert.match(adminQuotaMigration, /attempts between 0 and 15 and reserved between 0 and 15 and attempts \+ reserved <= 15/i);
+assert.match(adminQuotaMigration, /coalesce\(public\.is_promptly_admin\(\), false\)/i, "admin cap uses the canonical database authorization helper");
+assert.match(adminQuotaMigration, /v_daily_limit := 15/i);
+assert.match(adminQuotaMigration, /v_daily_limit := 3/i);
+assert.match(adminQuotaMigration, /elsif coalesce\(public\.is_promptly_pro\(\), false\)/i, "non-admins still require verified Pro access");
+assert.match(adminQuotaMigration, /pg_advisory_xact_lock\(hashtextextended\(v_user_id::text, 0\)\)/i, "per-user reservation lock prevents concurrent limit bypass");
+assert.match(adminQuotaMigration, /for update/i, "quota and reservation rows are locked during concurrent submissions");
+assert.match(adminQuotaMigration, /if found and v_status = 'reserved' then return 'in_progress'/i, "duplicate in-flight requests cannot reserve another evaluation");
+assert.match(adminQuotaMigration, /if found and v_status = 'succeeded' then return 'already_succeeded'/i, "duplicate successful requests return existing results");
+assert.match(adminQuotaMigration, /interval '30 seconds'/i, "30-second cooldown remains enforced");
+assert.match(adminQuotaMigration, /interval '5 minutes'/i, "stale leases continue to expire");
+assert.match(adminQuotaMigration, /select count\(\*\)::integer into v_successful_attempts[\s\S]*from public\.essay_attempts[\s\S]*submitted_at::date = current_date/i, "existing successes from every essay challenge count toward the expanded admin limit");
+assert.match(adminQuotaMigration, /set attempts = v_successful_attempts/i, "usage counter is reconciled from persisted successes rather than reset");
+assert.match(adminQuotaMigration, /v_attempts \+ v_reserved >= v_daily_limit/i, "both successful and in-flight work share the role-specific daily cap");
+assert.match(adminQuotaMigration, /set reserved = reserved - 1, attempts = attempts \+ 1/i, "only successful finalization consumes quota");
+assert.match(adminQuotaMigration, /get_promptly_essay_quota\(\)/i);
+assert.match(adminQuotaMigration, /grant execute on function public\.get_promptly_essay_quota\(\) to authenticated/i);
+assert.doesNotMatch(adminQuotaMigration, /\b(delete from|truncate|drop table)\b/i, "migration retains user history and usage rows");
 const route = await readFile(new URL("../app/api/essay-challenges/submit/route.ts", import.meta.url), "utf8");
 assert.match(route, /reserve_promptly_essay_attempt/);
 assert.match(route, /release_promptly_essay_attempt/);
@@ -111,11 +135,14 @@ assert.equal((route.match(/select\("id,answer,challenge_slug,criteria_scores,tot
 assert.match(route, /p_user_id: user\.id/);
 assert.match(route, /supabase\.rpc\("is_promptly_admin"\)/);
 assert.match(route, /catch \(error\)[\s\S]*?release_promptly_essay_attempt/);
+assert.match(route, /get_promptly_essay_quota/);
+assert.match(route, /access\.isAdmin \? 15 : 3/);
 assert.ok(route.indexOf("reserve_promptly_essay_attempt") < route.indexOf("evaluateEssayPrompt(submission.answer, challenge)"), "reservation precedes the AI request for every challenge");
 assert.doesNotMatch(route, /body\.(?:score|total_score|criteria_scores)/i);
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 assert.match(page, /ESSAY_CHALLENGES\.map/);
 const form = await readFile(new URL("../app/components/EssayChallengeForm.tsx", import.meta.url), "utf8");
 assert.match(form, /challenge_slug: challenge\.slug/);
+assert.match(form, /Kuota hari ini: \$\{quota\.successfulAttempts\}\/\$\{quota\.dailyLimit\}/);
 
 console.log("Three essay challenge rubrics, dynamic output validation, shared quota protections, access checks, and additive RPC migration passed (static/unit checks; no live provider or PostgreSQL database used).");

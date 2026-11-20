@@ -2,11 +2,16 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getEssayChallenge, parseEssaySubmission, resolveEssayAccess } from "@/lib/essay-challenge";
+import { getEssayChallenge, parseEssayQuota, parseEssaySubmission, resolveEssayAccess } from "@/lib/essay-challenge";
 import { evaluateEssayPrompt } from "@/lib/essay-evaluator";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function getQuotaSnapshot(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data, error } = await supabase.rpc("get_promptly_essay_quota");
+  return error ? null : parseEssayQuota(data);
+}
 
 export async function POST(request: Request) {
   const sizeHeader = Number(request.headers.get("content-length") ?? 0);
@@ -49,7 +54,7 @@ export async function POST(request: Request) {
     supabase.rpc("is_promptly_admin"),
     supabase.from("subscriptions").select("status,current_period_end").eq("user_id", user.id).maybeSingle(),
   ]);
-  if (adminError || subscriptionError) return NextResponse.json({ error: "Status akun Pro belum dapat diverifikasi. Coba lagi nanti." }, { status: 503 });
+  if (adminError || (isAdmin !== true && subscriptionError)) return NextResponse.json({ error: "Status akses belum dapat diverifikasi. Coba lagi nanti." }, { status: 503 });
   const access = resolveEssayAccess(isAdmin === true ? "admin" : "user", subscription, process.env.PROMPTLY_ESSAY_ADMIN_TEST_ENABLED === "true");
   if (!access.allowed) return NextResponse.json({ error: "Essay Challenge tersedia untuk akun Promptly Pro." }, { status: 403 });
   const { data: publishedChallenge, error: challengeError } = await supabase.from("essay_challenges")
@@ -72,7 +77,11 @@ export async function POST(request: Request) {
     if (quotaError.code === "42501") return NextResponse.json({ error: "Akses Promptly Pro atau migrasi kuota belum terverifikasi." }, { status: 403 });
     return NextResponse.json({ error: "Batas penggunaan essay belum dapat diverifikasi. Pastikan migrasi essay sudah dijalankan." }, { status: 503 });
   }
-  if (quotaStatus === "daily_limit") return NextResponse.json({ error: "Batas 3 evaluasi berhasil per hari tercapai. Silakan kembali besok." }, { status: 429 });
+  if (quotaStatus === "daily_limit") {
+    const quota = await getQuotaSnapshot(supabase);
+    const limit = quota?.dailyLimit ?? (access.isAdmin ? 15 : 3);
+    return NextResponse.json({ error: `Batas ${limit} evaluasi berhasil per hari tercapai. Silakan kembali besok.`, quota }, { status: 429 });
+  }
   if (quotaStatus === "rate_limited") return NextResponse.json({ error: "Tunggu 30 detik sebelum mengirim evaluasi berikutnya." }, { status: 429 });
   if (quotaStatus === "in_progress") return NextResponse.json({ error: "Permintaan yang sama sedang diproses. Tunggu sebentar lalu coba lagi." }, { status: 409 });
   if (quotaStatus === "already_succeeded") {
@@ -80,7 +89,7 @@ export async function POST(request: Request) {
       .select("id,answer,challenge_slug,criteria_scores,total_score,feedback,submitted_at")
       .eq("user_id", user.id).eq("request_id", submission.requestId).eq("challenge_slug", submission.challengeSlug).single();
     if (lookupError || !saved) return NextResponse.json({ error: "Hasil sebelumnya sudah diproses tetapi belum dapat dimuat." }, { status: 503 });
-    return NextResponse.json({ attempt: saved });
+    return NextResponse.json({ attempt: saved, quota: await getQuotaSnapshot(supabase) });
   }
   if (quotaStatus !== "reserved") return NextResponse.json({ error: "Reservasi penggunaan essay mengembalikan status yang tidak dikenal." }, { status: 503 });
 
@@ -118,5 +127,5 @@ export async function POST(request: Request) {
     .select("id,answer,challenge_slug,criteria_scores,total_score,feedback,submitted_at")
     .eq("user_id", user.id).eq("request_id", submission.requestId).single();
   if (lookupError || !saved) return NextResponse.json({ error: "Evaluasi tersimpan, tetapi hasil belum dapat dimuat. Kirim ulang permintaan yang sama untuk memuat hasilnya." }, { status: 503 });
-  return NextResponse.json({ attempt: saved });
+  return NextResponse.json({ attempt: saved, quota: await getQuotaSnapshot(supabase) });
 }
