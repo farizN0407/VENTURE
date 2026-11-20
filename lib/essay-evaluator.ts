@@ -1,4 +1,4 @@
-import { ESSAY_CHALLENGES, ESSAY_CRITERIA, parseEssayEvaluation, type EssayChallenge, type EssayEvaluation } from "./essay-challenge.ts";
+import { ESSAY_CHALLENGES, ESSAY_CRITERIA, parseEssayEvaluationWithDiagnostics, type EssayChallenge, type EssayEvaluation, type EssayEvaluationDiagnostics } from "./essay-challenge.ts";
 
 export function buildEssayEvaluationSchema(challenge: EssayChallenge) {
   const criteria = Object.fromEntries(ESSAY_CRITERIA.map(({ key }) => [key, {
@@ -44,7 +44,11 @@ Feedback rules: criterion feedback must explain the score with evidence and iden
 
 export const ESSAY_SCORING_GUIDANCE = buildEssayScoringGuidance(ESSAY_CHALLENGES[0]);
 
-export async function evaluateEssayPrompt(answer: string, challenge: EssayChallenge = ESSAY_CHALLENGES[0]): Promise<EssayEvaluation> {
+export async function evaluateEssayPrompt(
+  answer: string,
+  challenge: EssayChallenge = ESSAY_CHALLENGES[0],
+  onDiagnostics?: (diagnostics: EssayEvaluationDiagnostics) => void,
+): Promise<EssayEvaluation> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("Essay AI belum dikonfigurasi. Tambahkan OPENAI_API_KEY di environment server.");
   const model = process.env.PROMPTLY_ESSAY_MODEL?.trim() || "gpt-4o-mini";
@@ -74,5 +78,7 @@ export async function evaluateEssayPrompt(answer: string, challenge: EssayChalle
   if (typeof content !== "string") throw new Error("Layanan AI tidak mengembalikan hasil evaluasi.");
   let parsed: unknown;
   try { parsed = JSON.parse(content); } catch { throw new Error("Layanan AI mengembalikan JSON yang tidak valid."); }
-  return parseEssayEvaluation(parsed, answer, challenge);
+  const { evaluation, diagnostics } = parseEssayEvaluationWithDiagnostics(parsed, answer, challenge);
+  onDiagnostics?.(diagnostics);
+  return evaluation;
 }

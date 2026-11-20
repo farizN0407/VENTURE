@@ -94,7 +94,12 @@ export async function POST(request: Request) {
   if (quotaStatus !== "reserved") return NextResponse.json({ error: "Reservasi penggunaan essay mengembalikan status yang tidak dikenal." }, { status: 503 });
 
   let evaluation;
-  try { evaluation = await evaluateEssayPrompt(submission.answer, challenge); }
+  try {
+    evaluation = await evaluateEssayPrompt(submission.answer, challenge, (diagnostics) => {
+      // Diagnostics contain fixed rubric IDs and numeric validity/score data only—never prompt text or evidence quotes.
+      console.info("Promptly essay evaluation diagnostics", diagnostics);
+    });
+  }
   catch (error) {
     const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", {
       p_user_id: user.id, p_request_id: submission.requestId, p_lease_token: leaseToken,

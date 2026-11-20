@@ -88,13 +88,13 @@ export const ESSAY_CHALLENGES = [
     scenario: "Draft a polished message for a real audience and purpose.",
     instructions: "Write a prompt instructing an AI assistant to draft a professional email or report for a specified audience and purpose, with appropriate tone, clear structure, and no fabricated facts.",
     cardDescription: "Create a writing prompt with a clear audience, purpose, tone, and factual boundaries.",
-    evaluationGuidance: "Evaluate whether the submitted prompt gives an AI enough direction to draft a professional email or report for a real communication goal. Treat equivalent natural wording as satisfying a requirement: an email to a project supervisor can establish audience, asking for more time can establish purpose, respectful wording can establish tone, and naming a subject, greeting, body, and sign-off can establish structure. A request to use placeholders or ask questions for unknown details can satisfy the factual safeguard when it clearly prevents made-up facts. Do not require the challenge's labels or example phrases verbatim. The student need not provide actual private recipient details or source facts; assess whether the prompt supplies or requests that context.",
+    evaluationGuidance: "Evaluate whether the submitted prompt gives an AI enough direction to draft a professional email or report for a real communication goal. Treat equivalent natural wording as satisfying a requirement: an email to a project supervisor can establish audience, asking for more time can establish purpose, respectful wording can establish tone, and naming a subject, greeting, body, and sign-off can establish structure. A specified sequence such as opening, context, request, and close is also a clear structure; headings are optional. A request to use placeholders or ask questions for unknown details can satisfy the factual safeguard when it clearly prevents made-up facts. Do not require the challenge's labels or example phrases verbatim. The student need not provide actual private recipient details or source facts; assess whether the prompt supplies or requests that context.",
     requirements: [
       { key: "draftEmailOrReport", description: "Requests a professional email or report, including a clearly named message such as an email", missingAction: "Specify the writing deliverable, such as a professional email or report.", criterion: "clarityInstructions" },
       { key: "specifiedAudience", description: "Names or asks for the intended audience or recipient, including a role such as a project supervisor", missingAction: "Name or ask for the intended audience or recipient.", criterion: "contextRelevance" },
       { key: "specifiedPurpose", description: "States or asks for the communication's goal, such as requesting a deadline extension", missingAction: "State or ask for the communication's goal.", criterion: "contextRelevance" },
       { key: "appropriateTone", description: "Requests a tone appropriate to the audience and situation, such as respectful or professional", missingAction: "Request a tone appropriate to the audience and situation.", criterion: "clarityInstructions" },
-      { key: "outputStructure", description: "Requests a clear organization or names useful components such as a subject, greeting, body, and sign-off", missingAction: "Request a clear structure, such as a subject, greeting, body, and sign-off.", criterion: "outputStructure" },
+      { key: "outputStructure", description: "Requests a clear organization or sequence, or names useful components such as a subject, greeting, body, and sign-off; section headings are optional", missingAction: "Request an organized sequence or components, such as an opening, context, request, and close.", criterion: "outputStructure" },
       { key: "preventFabricatedFacts", description: "Prevents invented or unsupported facts, for example by requiring placeholders or questions when details are missing", missingAction: "Tell the assistant not to invent or assume facts and to use placeholders or ask when details are missing.", criterion: "accuracyResponsibleAI" },
     ],
     scoreCaps: [
@@ -118,6 +118,14 @@ export type EssayEvaluation = {
   weaknesses: string[];
   improvements: string[];
   improvedPrompt: string;
+};
+export type EssayEvaluationDiagnostics = {
+  challengeSlug: string;
+  rawCriterionScores: Record<EssayCriterionKey, number>;
+  requirements: Array<{ id: string; claimedPresent: boolean; quoteProvided: boolean; exactQuoteMatch: boolean; evidenceValid: boolean }>;
+  appliedCaps: Array<{ criterion: EssayCriterionKey; maxScore: number; missingRequirementIds: string[]; rawScore: number; finalScore: number }>;
+  finalCriterionScores: Record<EssayCriterionKey, number>;
+  totalScore: number;
 };
 export type EssayRequirementEvidence = Record<string, { present: boolean; evidence: string }>;
 export type EssayAttemptRecord = {
@@ -200,36 +208,54 @@ function hasExactEvidence(submittedPrompt: string, evidence: string): boolean {
   return Boolean(normalizedEvidence) && normalizedPrompt.includes(normalizedEvidence);
 }
 
-export function parseEssayEvaluation(value: unknown, submittedPrompt: string, challenge: EssayChallenge = ESSAY_CHALLENGE): EssayEvaluation {
+export function parseEssayEvaluationWithDiagnostics(value: unknown, submittedPrompt: string, challenge: EssayChallenge = ESSAY_CHALLENGE): { evaluation: EssayEvaluation; diagnostics: EssayEvaluationDiagnostics } {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("AI mengembalikan hasil dengan format yang tidak valid.");
   const result = value as Record<string, unknown>;
   const rawEvidence = result.requirementEvidence && typeof result.requirementEvidence === "object" && !Array.isArray(result.requirementEvidence)
     ? result.requirementEvidence as Record<string, unknown>
     : {};
   const evidence: EssayRequirementEvidence = {};
+  const requirementDiagnostics: EssayEvaluationDiagnostics["requirements"] = [];
   for (const { key } of challenge.requirements) {
     const item = rawEvidence[key];
     const entry = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : null;
     const quote = entry?.evidence;
-    const validEvidence = entry?.present === true && typeof quote === "string" && quote.length <= 500 && hasExactEvidence(submittedPrompt, quote);
+    const quoteProvided = typeof quote === "string" && quote.length > 0;
+    const exactQuoteMatch = typeof quote === "string" && quote.length <= 500 && hasExactEvidence(submittedPrompt, quote);
+    const validEvidence = entry?.present === true && exactQuoteMatch;
     evidence[key] = { present: validEvidence, evidence: validEvidence ? quote : "" };
+    requirementDiagnostics.push({
+      id: key,
+      claimedPresent: entry?.present === true,
+      quoteProvided,
+      exactQuoteMatch,
+      evidenceValid: validEvidence,
+    });
   }
   if (!result.criteria || typeof result.criteria !== "object" || Array.isArray(result.criteria)) throw new Error("AI tidak mengembalikan skor rubrik yang valid.");
   const rawCriteria = result.criteria as Record<string, unknown>;
   if (Object.keys(rawCriteria).length !== ESSAY_CRITERIA.length) throw new Error("Jumlah kriteria evaluasi tidak valid.");
   const criteria = {} as EssayEvaluation["criteria"];
+  const rawCriterionScores = {} as Record<EssayCriterionKey, number>;
   for (const { key } of ESSAY_CRITERIA) {
     const item = rawCriteria[key];
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("AI mengembalikan kriteria yang tidak lengkap.");
     const criterion = item as Record<string, unknown>;
     if (!Number.isInteger(criterion.score) || (criterion.score as number) < 0 || (criterion.score as number) > 25 || typeof criterion.feedback !== "string") throw new Error("Skor atau feedback rubrik AI tidak valid.");
+    rawCriterionScores[key] = criterion.score as number;
     criteria[key] = { score: criterion.score as number, feedback: normalizeFeedbackText(criterion.feedback, 600, `kriteria ${key}`) };
   }
   const caps = new Map<EssayCriterionKey, { score: number; explanations: string[] }>();
+  const triggeredCaps: Array<{ criterion: EssayCriterionKey; maxScore: number; missingRequirementIds: string[] }> = [];
   for (const rule of challenge.scoreCaps) {
     const anyMissing = rule.whenMissingAny?.some((key) => !evidence[key]?.present) ?? false;
     const allMissing = rule.whenMissingAll?.every((key) => !evidence[key]?.present) ?? false;
     if (!anyMissing && !allMissing) continue;
+    const missingRequirementIds = [...new Set([
+      ...(rule.whenMissingAny ?? []).filter((key) => !evidence[key]?.present),
+      ...(allMissing ? rule.whenMissingAll ?? [] : []),
+    ])];
+    triggeredCaps.push({ criterion: rule.criterion, maxScore: rule.maxScore, missingRequirementIds });
     const existing = caps.get(rule.criterion);
     caps.set(rule.criterion, { score: Math.min(existing?.score ?? 25, rule.maxScore), explanations: [...(existing?.explanations ?? []), rule.explanation] });
   }
@@ -240,7 +266,7 @@ export function parseEssayEvaluation(value: unknown, submittedPrompt: string, ch
   const improvementsFromAI = normalizeFeedbackList(result.improvements, 400, "improvements");
   const improvedPrompt = normalizeFeedbackText(result.improvedPrompt, 5000, "contoh prompt");
   const missingActions = challenge.requirements.filter(({ key }) => !evidence[key].present).map(({ missingAction }) => missingAction);
-  return {
+  const evaluation: EssayEvaluation = {
     criteria,
     totalScore: Object.values(criteria).reduce((sum, item) => sum + item.score, 0),
     strengths,
@@ -248,6 +274,26 @@ export function parseEssayEvaluation(value: unknown, submittedPrompt: string, ch
     improvements: [...new Set([...missingActions, ...improvementsFromAI])].slice(0, 5),
     improvedPrompt,
   };
+  const appliedCaps = triggeredCaps.map((cap) => ({
+    ...cap,
+    rawScore: rawCriterionScores[cap.criterion],
+    finalScore: criteria[cap.criterion].score,
+  }));
+  return {
+    evaluation,
+    diagnostics: {
+      challengeSlug: challenge.slug,
+      rawCriterionScores,
+      requirements: requirementDiagnostics,
+      appliedCaps,
+      finalCriterionScores: Object.fromEntries(ESSAY_CRITERIA.map(({ key }) => [key, criteria[key].score])) as Record<EssayCriterionKey, number>,
+      totalScore: evaluation.totalScore,
+    },
+  };
+}
+
+export function parseEssayEvaluation(value: unknown, submittedPrompt: string, challenge: EssayChallenge = ESSAY_CHALLENGE): EssayEvaluation {
+  return parseEssayEvaluationWithDiagnostics(value, submittedPrompt, challenge).evaluation;
 }
 
 export function resolveEssayAccess(role: string | null | undefined, subscription: SubscriptionRecord, adminTestEnabled: boolean, now = Date.now()) {

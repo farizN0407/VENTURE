@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
-  ESSAY_CHALLENGES, ESSAY_CRITERIA, getEssayChallenge, parseEssayEvaluation, parseEssaySubmission, resolveEssayAccess,
+  ESSAY_CHALLENGES, ESSAY_CRITERIA, getEssayChallenge, parseEssayEvaluation, parseEssayEvaluationWithDiagnostics, parseEssaySubmission, resolveEssayAccess,
   parseEssayQuota,
 } from "../lib/essay-challenge.ts";
 import { buildEssayEvaluationSchema, buildEssayScoringGuidance, evaluateEssayPrompt } from "../lib/essay-evaluator.ts";
@@ -78,25 +78,34 @@ const professionalWriting = getEssayChallenge("professional-writing");
 assert.ok(professionalWriting);
 assert.match(buildEssayScoringGuidance(professionalWriting), /equivalent natural phrasing/i);
 assert.match(buildEssayScoringGuidance(professionalWriting), /verbatim quote[\s\S]*never a paraphrase/i);
-function professionalWritingResult(prompt, quoteByRequirement, criterionScores) {
+function professionalWritingPayload(quoteByRequirement, criterionScores) {
   const requirementEvidence = Object.fromEntries(professionalWriting.requirements.map(({ key }) => {
     const quote = quoteByRequirement[key];
     return [key, quote ? { present: true, evidence: quote } : { present: false, evidence: "" }];
   }));
   const criteria = Object.fromEntries(ESSAY_CRITERIA.map(({ key }, index) => [key, { score: criterionScores[index], feedback: "The score reflects the submitted communication prompt." }]));
-  return parseEssayEvaluation({
+  return {
     criteria, requirementEvidence, strengths: ["The prompt sets a communication goal."],
     weaknesses: ["Some directions could be clearer."], improvements: ["Add any missing task details."],
     improvedPrompt: "Draft a professional message using the requested context and factual safeguards.",
-  }, prompt, professionalWriting);
+  };
+}
+function professionalWritingResult(prompt, quoteByRequirement, criterionScores) {
+  return parseEssayEvaluation(professionalWritingPayload(quoteByRequirement, criterionScores), prompt, professionalWriting);
 }
 
 const weakWritingPrompt = "Write a professional email.";
 const weakWriting = professionalWritingResult(weakWritingPrompt, {
   draftEmailOrReport: "professional email",
-}, [24, 24, 24, 24]);
-assert.equal(weakWriting.totalScore, 26, "a prompt with no audience, purpose, structure, or factual safeguards remains capped at 26 even when raw AI scores are high");
+}, [2, 2, 1, 1]);
+assert.equal(weakWriting.totalScore, 6, "the weak live example remains low when the mock AI assigns low raw scores");
 assert.equal(weakWriting.totalScore, Object.values(weakWriting.criteria).reduce((sum, item) => sum + item.score, 0));
+const weakWritingDiagnostics = parseEssayEvaluationWithDiagnostics(professionalWritingPayload({ draftEmailOrReport: "professional email" }, [24, 24, 24, 24]), weakWritingPrompt, professionalWriting).diagnostics;
+assert.deepEqual(weakWritingDiagnostics.appliedCaps.map(({ criterion }) => criterion), ["clarityInstructions", "contextRelevance", "outputStructure", "accuracyResponsibleAI"]);
+assert.equal(weakWritingDiagnostics.totalScore, 26);
+assert.deepEqual(Object.values(weakWritingDiagnostics.finalCriterionScores), [8, 8, 5, 5], "when all four caps trigger, their maximum combined score is 26");
+assert.ok(weakWritingDiagnostics.requirements.some(({ id, claimedPresent, evidenceValid }) => id === "specifiedAudience" && !claimedPresent && !evidenceValid));
+assert.equal(JSON.stringify(weakWritingDiagnostics).includes(weakWritingPrompt), false, "scoring diagnostics never include the submitted prompt");
 
 const intermediateWritingPrompt = "Draft a respectful email to my project supervisor asking to extend the report deadline by one week.";
 const intermediateWriting = professionalWritingResult(intermediateWritingPrompt, {
@@ -107,17 +116,65 @@ const intermediateWriting = professionalWritingResult(intermediateWritingPrompt,
 }, [18, 18, 12, 10]);
 assert.ok(intermediateWriting.totalScore > 26 && intermediateWriting.totalScore < 80, "an intermediate prompt with alternate wording earns credit for evidence it explicitly contains");
 
-const strongWritingPrompt = "Draft a concise email to my project supervisor asking for an extra week to deliver the report. Keep it respectful and professional. Include a subject line, greeting, brief explanation, request, and sign-off. Do not invent dates or project facts; leave placeholders for details I have not supplied.";
-const strongWriting = professionalWritingResult(strongWritingPrompt, {
-  draftEmailOrReport: "Draft a concise email",
+const detailedDeadlinePrompt = "Please draft an email to my project supervisor explaining that integration testing is taking longer than planned and asking to move the release deadline from 14 May to 21 May. Keep the tone respectful, confident, and concise. Organize it with a clear opening, brief context, the new date, and a courteous close. Do not invent project status or commitments; if details are missing, use bracketed placeholders and ask me before adding them.";
+const detailedDeadlineEvidence = {
+  draftEmailOrReport: "draft an email",
   specifiedAudience: "my project supervisor",
-  specifiedPurpose: "asking for an extra week to deliver the report",
-  appropriateTone: "respectful and professional",
-  outputStructure: "subject line, greeting, brief explanation, request, and sign-off",
-  preventFabricatedFacts: "Do not invent dates or project facts; leave placeholders for details I have not supplied.",
-}, [23, 22, 23, 22]);
-assert.ok(strongWriting.totalScore >= 85, "a strong prompt with exact evidence for all requirements can score highly");
-assert.equal(strongWriting.totalScore, Object.values(strongWriting.criteria).reduce((sum, item) => sum + item.score, 0));
+  specifiedPurpose: "asking to move the release deadline from 14 May to 21 May",
+  appropriateTone: "respectful, confident, and concise",
+  outputStructure: "clear opening, brief context, the new date, and a courteous close",
+  preventFabricatedFacts: "Do not invent project status or commitments; if details are missing, use bracketed placeholders and ask me before adding them.",
+};
+const detailedDeadline = professionalWritingResult(detailedDeadlinePrompt, detailedDeadlineEvidence, [23, 22, 22, 23]);
+const detailedDeadlineDiagnostics = parseEssayEvaluationWithDiagnostics(professionalWritingPayload(detailedDeadlineEvidence, [23, 22, 22, 23]), detailedDeadlinePrompt, professionalWriting).diagnostics;
+assert.equal(detailedDeadline.totalScore, 90, "a detailed paragraph-style deadline extension prompt can earn a high score without headings");
+assert.equal(detailedDeadlineDiagnostics.appliedCaps.length, 0);
+assert.ok(detailedDeadlineDiagnostics.requirements.every(({ evidenceValid }) => evidenceValid));
+
+const sponsorshipHeadingPrompt = "Draft a professional sponsorship email to the local robotics club's director to request funding for the student showcase. Use a courteous, enthusiastic tone. Structure it with Subject, Greeting, Event overview, Sponsorship request, Benefits, and Sign-off. Use only provided event details; do not invent amounts, dates, sponsors, or promises. Leave [amount] and [date] placeholders for missing details.";
+const sponsorshipEvidence = {
+  draftEmailOrReport: "professional sponsorship email",
+  specifiedAudience: "the local robotics club's director",
+  specifiedPurpose: "to request funding for the student showcase",
+  appropriateTone: "courteous, enthusiastic tone",
+  outputStructure: "Subject, Greeting, Event overview, Sponsorship request, Benefits, and Sign-off",
+  preventFabricatedFacts: "do not invent amounts, dates, sponsors, or promises. Leave [amount] and [date] placeholders for missing details.",
+};
+const sponsorshipHeading = professionalWritingResult(sponsorshipHeadingPrompt, sponsorshipEvidence, [25, 25, 25, 25]);
+assert.equal(sponsorshipHeading.totalScore, 100, "the headed sponsorship case retains its expected score when exact evidence is valid");
+
+const itDelayParagraphPrompt = "Write an email to the client project lead explaining our software rollout is delayed because the migration test found an unresolved data issue. The purpose is to propose a revised go-live date and request approval for an extra testing window. Keep the message calm, accountable, and professional. Begin with a concise status summary, explain the impact and next steps, then end with the requested decision and a polite sign-off. Do not invent metrics, causes, or commitments beyond these facts; use [placeholder] for missing details and ask before asserting them.";
+const itDelayEvidence = {
+  draftEmailOrReport: "Write an email",
+  specifiedAudience: "the client project lead",
+  specifiedPurpose: "propose a revised go-live date and request approval for an extra testing window",
+  appropriateTone: "calm, accountable, and professional",
+  outputStructure: "Begin with a concise status summary, explain the impact and next steps, then end with the requested decision and a polite sign-off",
+  preventFabricatedFacts: "Do not invent metrics, causes, or commitments beyond these facts; use [placeholder] for missing details and ask before asserting them.",
+};
+const itDelayParagraph = professionalWritingResult(itDelayParagraphPrompt, itDelayEvidence, [23, 23, 22, 22]);
+const itDelayDiagnostics = parseEssayEvaluationWithDiagnostics(professionalWritingPayload(itDelayEvidence, [23, 23, 22, 22]), itDelayParagraphPrompt, professionalWriting).diagnostics;
+assert.equal(itDelayParagraph.totalScore, 90, "a paragraph-style IT delay prompt with an explicit sequence is not penalized for lacking headings");
+assert.equal(itDelayDiagnostics.appliedCaps.length, 0);
+assert.ok(itDelayDiagnostics.requirements.every(({ evidenceValid }) => evidenceValid));
+assert.equal(detailedDeadline.totalScore, itDelayParagraph.totalScore, "equivalent paragraph-style requests are not capped differently from heading-based structure");
+assert.ok(detailedDeadlineDiagnostics.requirements.every(({ exactQuoteMatch }) => exactQuoteMatch));
+assert.ok(itDelayDiagnostics.requirements.every(({ exactQuoteMatch }) => exactQuoteMatch));
+
+const itDelayHeadingPrompt = "Write an email to the client project lead. Purpose: explain our software rollout is delayed because the migration test found an unresolved data issue; propose a revised go-live date and request approval for an extra testing window. Tone: calm, accountable, and professional. Structure: begin with a concise status summary, explain the impact and next steps, then end with the requested decision and a polite sign-off. Accuracy: do not invent metrics, causes, or commitments beyond these facts; use [placeholder] for missing details and ask before asserting them.";
+const itDelayHeadingEvidence = {
+  draftEmailOrReport: "Write an email",
+  specifiedAudience: "the client project lead",
+  specifiedPurpose: "propose a revised go-live date and request approval for an extra testing window",
+  appropriateTone: "calm, accountable, and professional",
+  outputStructure: "begin with a concise status summary, explain the impact and next steps, then end with the requested decision and a polite sign-off",
+  preventFabricatedFacts: "do not invent metrics, causes, or commitments beyond these facts; use [placeholder] for missing details and ask before asserting them.",
+};
+const itDelayHeading = professionalWritingResult(itDelayHeadingPrompt, itDelayHeadingEvidence, [23, 23, 22, 22]);
+const itDelayHeadingDiagnostics = parseEssayEvaluationWithDiagnostics(professionalWritingPayload(itDelayHeadingEvidence, [23, 23, 22, 22]), itDelayHeadingPrompt, professionalWriting).diagnostics;
+assert.equal(itDelayHeading.totalScore, itDelayParagraph.totalScore, "same IT-delay request receives the same score in headings and natural paragraphs");
+assert.equal(itDelayHeadingDiagnostics.appliedCaps.length, 0);
+assert.ok(itDelayHeadingDiagnostics.requirements.every(({ evidenceValid }) => evidenceValid));
 
 const now = Date.now();
 assert.equal(resolveEssayAccess("user", null, false, now).allowed, false);
@@ -149,15 +206,23 @@ for (const challenge of ESSAY_CHALLENGES) {
     assert.equal(JSON.parse(requestBody.messages[1].content).submitted_prompt, prompt);
     return Response.json({ choices: [{ message: { content: JSON.stringify(structuredOutput) } }] });
   };
-  assert.equal((await evaluateEssayPrompt(prompt, challenge)).totalScore, 84, `structured output for ${challenge.slug} passes validation`);
+  let recordedDiagnostics;
+  assert.equal((await evaluateEssayPrompt(prompt, challenge, (value) => { recordedDiagnostics = value; })).totalScore, 84, `structured output for ${challenge.slug} passes validation`);
+  assert.ok(recordedDiagnostics.requirements.every(({ evidenceValid }) => evidenceValid));
+  assert.equal(JSON.stringify(recordedDiagnostics).includes(prompt), false, "evaluator diagnostics omit submitted prompt content");
   const firstRequirement = challenge.requirements[0];
   structuredOutput.requirementEvidence[firstRequirement.key] = { present: true, evidence: "A paraphrase that is not a quote from the submitted prompt." };
-  const invalidEvidenceResult = await evaluateEssayPrompt(prompt, challenge);
+  let invalidDiagnostics;
+  const invalidEvidenceResult = await evaluateEssayPrompt(prompt, challenge, (value) => { invalidDiagnostics = value; });
   const applicableCap = Math.min(...challenge.scoreCaps
     .filter(({ whenMissingAny = [], whenMissingAll = [] }) => whenMissingAny.includes(firstRequirement.key) || whenMissingAll.includes(firstRequirement.key))
     .map(({ maxScore }) => maxScore));
   assert.ok(invalidEvidenceResult.criteria[firstRequirement.criterion].score <= applicableCap, `OpenAI paraphrased evidence for ${challenge.slug} is capped instead of failing evaluation`);
   assert.equal(invalidEvidenceResult.totalScore, Object.values(invalidEvidenceResult.criteria).reduce((sum, item) => sum + item.score, 0));
+  assert.deepEqual(invalidDiagnostics.requirements.find(({ id }) => id === firstRequirement.key), {
+    id: firstRequirement.key, claimedPresent: true, quoteProvided: true, exactQuoteMatch: false, evidenceValid: false,
+  });
+  assert.equal(JSON.stringify(invalidDiagnostics).includes("A paraphrase"), false, "diagnostic logs expose quote validity, not user or model quote text");
 }
 globalThis.fetch = async () => new Response("unavailable", { status: 503 });
 await assert.rejects(() => evaluateEssayPrompt("A long enough prompt for an unavailable evaluator."), /gagal memproses/);
@@ -242,7 +307,9 @@ assert.doesNotMatch(quotaHardeningMigration, /\b(delete from|truncate|drop table
 const route = await readFile(new URL("../app/api/essay-challenges/submit/route.ts", import.meta.url), "utf8");
 assert.match(route, /reserve_promptly_essay_attempt/);
 assert.match(route, /release_promptly_essay_attempt/);
-assert.match(route, /evaluateEssayPrompt\(submission\.answer, challenge\)/);
+assert.match(route, /evaluateEssayPrompt\(submission\.answer, challenge, \(diagnostics\) =>/);
+assert.match(route, /console\.info\("Promptly essay evaluation diagnostics", diagnostics\)/);
+assert.match(route, /never prompt text or evidence quotes/i);
 assert.match(route, /p_challenge_slug: submission\.challengeSlug/);
 assert.equal((route.match(/select\("id,answer,challenge_slug,criteria_scores,total_score,feedback,submitted_at"\)/g) ?? []).length, 2, "saved history responses retain the correct challenge title on the client");
 assert.match(route, /p_user_id: user\.id/);
@@ -254,7 +321,7 @@ const finalizeFailure = route.slice(route.indexOf("if (finalizeError || !attempt
 assert.match(finalizeFailure, /release_promptly_essay_attempt/);
 assert.match(finalizeFailure, /finalizeError\?\.code === "42501"/);
 assert.match(finalizeFailure, /finalizeError\?\.code === "P0001"/);
-assert.ok(route.indexOf("reserve_promptly_essay_attempt") < route.indexOf("evaluateEssayPrompt(submission.answer, challenge)"), "reservation precedes the AI request for every challenge");
+assert.ok(route.indexOf("reserve_promptly_essay_attempt") < route.indexOf("evaluateEssayPrompt(submission.answer, challenge,"), "reservation precedes the AI request for every challenge");
 assert.doesNotMatch(route, /body\.(?:score|total_score|criteria_scores)/i);
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 assert.match(page, /ESSAY_CHALLENGES\.map/);
