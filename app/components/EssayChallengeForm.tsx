@@ -1,9 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ESSAY_CHALLENGE, ESSAY_CRITERIA, ESSAY_MAX_LENGTH, ESSAY_MIN_LENGTH, type EssayAttemptRecord } from "@/lib/essay-challenge";
+import { ESSAY_CRITERIA, ESSAY_MAX_LENGTH, ESSAY_MIN_LENGTH, type EssayAttemptRecord, type EssayChallenge } from "@/lib/essay-challenge";
 
-export default function EssayChallengeForm({ initialAttempts }: { initialAttempts: EssayAttemptRecord[] }) {
+export default function EssayChallengeForm({ challenge, initialAttempts }: { challenge: EssayChallenge; initialAttempts: EssayAttemptRecord[] }) {
   const [answer, setAnswer] = useState("");
   const [attempts, setAttempts] = useState(initialAttempts);
   const [pending, setPending] = useState(false);
@@ -22,7 +22,7 @@ export default function EssayChallengeForm({ initialAttempts }: { initialAttempt
     try {
       const response = await fetch("/api/essay-challenges/submit", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challenge_slug: ESSAY_CHALLENGE.slug, answer: trimmed, request_id: requestIdRef.current.id }),
+        body: JSON.stringify({ challenge_slug: challenge.slug, answer: trimmed, request_id: requestIdRef.current.id }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Essay tidak dapat dievaluasi.");
@@ -38,8 +38,8 @@ export default function EssayChallengeForm({ initialAttempts }: { initialAttempt
   return <>
     <section className="essay-panel">
       <div className="label">TANTANGAN PROMPTING · PROMPTLY PRO</div>
-      <h1 className="essay-title">{ESSAY_CHALLENGE.title}</h1>
-      <p className="essay-instructions">{ESSAY_CHALLENGE.instructions}</p>
+      <h1 className="essay-title">{challenge.title}</h1>
+      <p className="essay-instructions">{challenge.instructions}</p>
       <form className="essay-form" onSubmit={submit}>
         <label htmlFor="essay-answer">Tulis prompt kamu sendiri</label>
         <textarea id="essay-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} maxLength={ESSAY_MAX_LENGTH} minLength={ESSAY_MIN_LENGTH} required disabled={pending} placeholder="Contoh: You are an academic research assistant…" />
@@ -55,6 +55,6 @@ export default function EssayChallengeForm({ initialAttempts }: { initialAttempt
       <div className="essay-feedback-grid"><div><h3>Kekuatan prompt</h3><ul>{latest.feedback.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3>Kelemahan yang ditemukan</h3><ul>{(latest.feedback.weaknesses?.length ? latest.feedback.weaknesses : ["Belum tersedia pada hasil evaluasi lama."]).map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3>Langkah perbaikan</h3><ul>{latest.feedback.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
       <div className="essay-improved"><h3>Contoh prompt yang lebih baik</h3><p>{latest.feedback.improvedPrompt}</p></div>
     </section>}
-    <section className="essay-history"><div className="head"><div><div className="label">PROGRESMU</div><h2>Riwayat pengerjaan</h2></div></div>{attempts.length ? <div className="attempt-list">{attempts.map((attempt) => <article className="attempt-row" key={attempt.id}><div><strong>{ESSAY_CHALLENGE.title}</strong><small>{new Date(attempt.submitted_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</small></div><span>{attempt.total_score}/100</span></article>)}</div> : <p className="account-empty">Belum ada percobaan. Kirim prompt pertamamu untuk melihat hasilnya di sini.</p>}</section>
+    <section className="essay-history"><div className="head"><div><div className="label">PROGRESMU</div><h2>Riwayat pengerjaan</h2></div></div>{attempts.length ? <div className="attempt-list">{attempts.map((attempt) => <article className="attempt-row" key={attempt.id}><div><strong>{attempt.challenge_slug === challenge.slug ? challenge.title : attempt.challenge_slug}</strong><small>{new Date(attempt.submitted_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</small></div><span>{attempt.total_score}/100</span></article>)}</div> : <p className="account-empty">Belum ada percobaan. Kirim prompt pertamamu untuk melihat hasilnya di sini.</p>}</section>
   </>;
 }

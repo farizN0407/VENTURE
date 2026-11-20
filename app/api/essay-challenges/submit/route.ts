@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ESSAY_CHALLENGE, parseEssaySubmission, resolveEssayAccess } from "@/lib/essay-challenge";
+import { getEssayChallenge, parseEssaySubmission, resolveEssayAccess } from "@/lib/essay-challenge";
 import { evaluateEssayPrompt } from "@/lib/essay-evaluator";
 
 export const runtime = "nodejs";
@@ -36,6 +36,8 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Permintaan essay tidak valid." }, { status: 400 });
   }
+  const challenge = getEssayChallenge(submission.challengeSlug);
+  if (!challenge) return NextResponse.json({ error: "Essay challenge tidak ditemukan." }, { status: 404 });
 
   let supabase;
   try { supabase = await createClient(); }
@@ -50,6 +52,10 @@ export async function POST(request: Request) {
   if (adminError || subscriptionError) return NextResponse.json({ error: "Status akun Pro belum dapat diverifikasi. Coba lagi nanti." }, { status: 503 });
   const access = resolveEssayAccess(isAdmin === true ? "admin" : "user", subscription, process.env.PROMPTLY_ESSAY_ADMIN_TEST_ENABLED === "true");
   if (!access.allowed) return NextResponse.json({ error: "Essay Challenge tersedia untuk akun Promptly Pro." }, { status: 403 });
+  const { data: publishedChallenge, error: challengeError } = await supabase.from("essay_challenges")
+    .select("slug").eq("slug", challenge.slug).eq("published", true).maybeSingle();
+  if (challengeError) return NextResponse.json({ error: "Status publikasi challenge belum dapat diverifikasi." }, { status: 503 });
+  if (!publishedChallenge) return NextResponse.json({ error: "Essay challenge belum tersedia." }, { status: 404 });
   if (!process.env.OPENAI_API_KEY) return NextResponse.json({ error: "Evaluasi AI belum dikonfigurasi. Hubungi administrator." }, { status: 503 });
 
   let admin;
@@ -71,15 +77,15 @@ export async function POST(request: Request) {
   if (quotaStatus === "in_progress") return NextResponse.json({ error: "Permintaan yang sama sedang diproses. Tunggu sebentar lalu coba lagi." }, { status: 409 });
   if (quotaStatus === "already_succeeded") {
     const { data: saved, error: lookupError } = await supabase.from("essay_attempts")
-      .select("id,answer,criteria_scores,total_score,feedback,submitted_at")
-      .eq("user_id", user.id).eq("request_id", submission.requestId).single();
+      .select("id,answer,challenge_slug,criteria_scores,total_score,feedback,submitted_at")
+      .eq("user_id", user.id).eq("request_id", submission.requestId).eq("challenge_slug", submission.challengeSlug).single();
     if (lookupError || !saved) return NextResponse.json({ error: "Hasil sebelumnya sudah diproses tetapi belum dapat dimuat." }, { status: 503 });
     return NextResponse.json({ attempt: saved });
   }
   if (quotaStatus !== "reserved") return NextResponse.json({ error: "Reservasi penggunaan essay mengembalikan status yang tidak dikenal." }, { status: 503 });
 
   let evaluation;
-  try { evaluation = await evaluateEssayPrompt(submission.answer); }
+  try { evaluation = await evaluateEssayPrompt(submission.answer, challenge); }
   catch (error) {
     const { error: releaseError } = await admin.rpc("release_promptly_essay_attempt", {
       p_user_id: user.id, p_request_id: submission.requestId, p_lease_token: leaseToken,
@@ -94,7 +100,7 @@ export async function POST(request: Request) {
     p_user_id: user.id,
     p_request_id: submission.requestId,
     p_lease_token: leaseToken,
-    p_challenge_slug: ESSAY_CHALLENGE.slug,
+    p_challenge_slug: submission.challengeSlug,
     p_answer: submission.answer,
     p_criteria_scores: evaluation.criteria,
     p_total_score: evaluation.totalScore,
@@ -109,7 +115,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Evaluasi selesai, tetapi hasil belum tersimpan. Kuota dilepas bila penyimpanan belum berhasil; coba lagi dengan permintaan yang sama." }, { status: 503 });
   }
   const { data: saved, error: lookupError } = await supabase.from("essay_attempts")
-    .select("id,answer,criteria_scores,total_score,feedback,submitted_at")
+    .select("id,answer,challenge_slug,criteria_scores,total_score,feedback,submitted_at")
     .eq("user_id", user.id).eq("request_id", submission.requestId).single();
   if (lookupError || !saved) return NextResponse.json({ error: "Evaluasi tersimpan, tetapi hasil belum dapat dimuat. Kirim ulang permintaan yang sama untuk memuat hasilnya." }, { status: 503 });
   return NextResponse.json({ attempt: saved });
