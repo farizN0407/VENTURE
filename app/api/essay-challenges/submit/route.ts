@@ -121,6 +121,14 @@ export async function POST(request: Request) {
     });
     if (releaseError) console.error("Essay quota release after save failure failed", { code: releaseError.code });
     console.error("Essay attempt finalization failed", { code: finalizeError?.code });
+    if (finalizeError?.code === "42501") {
+      return NextResponse.json({ error: "Akses essay berubah selama evaluasi; hasil tidak disimpan dan reservasi dilepas.", quota: await getQuotaSnapshot(supabase) }, { status: 403 });
+    }
+    if (finalizeError?.code === "P0001") {
+      const quota = await getQuotaSnapshot(supabase);
+      const limit = quota?.dailyLimit ?? (access.isAdmin ? 15 : 3);
+      return NextResponse.json({ error: `Batas ${limit} evaluasi berhasil per hari tercapai sebelum hasil dapat disimpan.`, quota }, { status: 429 });
+    }
     return NextResponse.json({ error: "Evaluasi selesai, tetapi hasil belum tersimpan. Kuota dilepas bila penyimpanan belum berhasil; coba lagi dengan permintaan yang sama." }, { status: 503 });
   }
   const { data: saved, error: lookupError } = await supabase.from("essay_attempts")

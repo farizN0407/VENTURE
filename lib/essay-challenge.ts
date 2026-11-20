@@ -140,7 +140,7 @@ export function parseEssayQuota(value: unknown): EssayQuota | null {
   const dailyLimit = quota.daily_limit ?? quota.dailyLimit;
   if (!Number.isInteger(successfulAttempts) || !Number.isInteger(reservedAttempts) ||
       !Number.isInteger(dailyLimit) || (dailyLimit !== 3 && dailyLimit !== 15) ||
-      (successfulAttempts as number) < 0 || (successfulAttempts as number) > dailyLimit ||
+      (successfulAttempts as number) < 0 ||
       (reservedAttempts as number) < 0 || (reservedAttempts as number) > dailyLimit) return null;
   return {
     successfulAttempts: successfulAttempts as number,
