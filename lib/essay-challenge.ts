@@ -190,21 +190,29 @@ function normalizeFeedbackList(value: unknown, maxItemLength: number, label: str
   return normalized;
 }
 
+function normalizeEvidenceForMatch(value: string): string {
+  return value.normalize("NFKC").replace(/\p{White_Space}+/gu, " ").trim().toLocaleLowerCase("en-US");
+}
+
+function hasExactEvidence(submittedPrompt: string, evidence: string): boolean {
+  const normalizedPrompt = normalizeEvidenceForMatch(submittedPrompt);
+  const normalizedEvidence = normalizeEvidenceForMatch(evidence);
+  return Boolean(normalizedEvidence) && normalizedPrompt.includes(normalizedEvidence);
+}
+
 export function parseEssayEvaluation(value: unknown, submittedPrompt: string, challenge: EssayChallenge = ESSAY_CHALLENGE): EssayEvaluation {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("AI mengembalikan hasil dengan format yang tidak valid.");
   const result = value as Record<string, unknown>;
-  if (!result.requirementEvidence || typeof result.requirementEvidence !== "object" || Array.isArray(result.requirementEvidence)) throw new Error("AI tidak mengembalikan pemeriksaan persyaratan yang valid.");
-  const rawEvidence = result.requirementEvidence as Record<string, unknown>;
-  if (Object.keys(rawEvidence).length !== challenge.requirements.length || challenge.requirements.some(({ key }) => !(key in rawEvidence))) throw new Error("Jumlah pemeriksaan persyaratan tidak valid.");
+  const rawEvidence = result.requirementEvidence && typeof result.requirementEvidence === "object" && !Array.isArray(result.requirementEvidence)
+    ? result.requirementEvidence as Record<string, unknown>
+    : {};
   const evidence: EssayRequirementEvidence = {};
   for (const { key } of challenge.requirements) {
     const item = rawEvidence[key];
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Bukti persyaratan AI tidak lengkap.");
-    const entry = item as Record<string, unknown>;
-    if (typeof entry.present !== "boolean" || typeof entry.evidence !== "string" || entry.evidence.length > 500 ||
-      (entry.present && (!entry.evidence.trim() || !submittedPrompt.toLocaleLowerCase().includes(entry.evidence.toLocaleLowerCase()))) ||
-      (!entry.present && entry.evidence.length > 0)) throw new Error("Bukti persyaratan tidak ditemukan secara persis pada prompt.");
-    evidence[key] = { present: entry.present, evidence: entry.evidence };
+    const entry = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : null;
+    const quote = entry?.evidence;
+    const validEvidence = entry?.present === true && typeof quote === "string" && quote.length <= 500 && hasExactEvidence(submittedPrompt, quote);
+    evidence[key] = { present: validEvidence, evidence: validEvidence ? quote : "" };
   }
   if (!result.criteria || typeof result.criteria !== "object" || Array.isArray(result.criteria)) throw new Error("AI tidak mengembalikan skor rubrik yang valid.");
   const rawCriteria = result.criteria as Record<string, unknown>;

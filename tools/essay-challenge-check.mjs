@@ -32,6 +32,37 @@ for (const challenge of ESSAY_CHALLENGES) {
   for (const value of Object.values(weak.criteria)) assert.ok(value.score <= 25);
 }
 
+for (const challenge of ESSAY_CHALLENGES) {
+  const prompt = challenge.requirements.map(({ description }) => description).join(". ");
+  const criteria = Object.fromEntries(ESSAY_CRITERIA.map(({ key }) => [key, { score: 25, feedback: "All challenge requirements are present." }]));
+  const makePayload = (requirementEvidence) => ({
+    criteria, requirementEvidence,
+    strengths: ["The prompt covers the task."], weaknesses: ["Review the details."],
+    improvements: ["Clarify any remaining details."], improvedPrompt: `A complete ${challenge.title} prompt.`,
+  });
+  const exactEvidence = Object.fromEntries(challenge.requirements.map(({ key, description }) => [key, { present: true, evidence: description }]));
+  const firstRequirement = challenge.requirements[0];
+  const firstRequirementCap = Math.min(...challenge.scoreCaps
+    .filter(({ whenMissingAny = [], whenMissingAll = [] }) => whenMissingAny.includes(firstRequirement.key) || whenMissingAll.includes(firstRequirement.key))
+    .map(({ maxScore }) => maxScore));
+
+  const paraphrasedEvidence = { ...exactEvidence, [firstRequirement.key]: { present: true, evidence: "A paraphrase that does not appear in the submitted prompt." } };
+  const paraphraseResult = parseEssayEvaluation(makePayload(paraphrasedEvidence), prompt, challenge);
+  assert.ok(paraphraseResult.criteria[firstRequirement.criterion].score <= firstRequirementCap, `${challenge.slug} paraphrased evidence is treated as unproven and capped`);
+  assert.equal(paraphraseResult.totalScore, Object.values(paraphraseResult.criteria).reduce((sum, item) => sum + item.score, 0), `${challenge.slug} total is recomputed after invalid evidence caps`);
+
+  const missingEvidence = { ...exactEvidence };
+  delete missingEvidence[firstRequirement.key];
+  const missingResult = parseEssayEvaluation(makePayload(missingEvidence), prompt, challenge);
+  assert.ok(missingResult.criteria[firstRequirement.criterion].score <= firstRequirementCap, `${challenge.slug} missing evidence is unproven and capped`);
+
+  const unicodePrompt = `${firstRequirement.description.replace(" ", "\u00a0")} — café\n${challenge.requirements.slice(1).map(({ description }) => description).join(". ")}`;
+  const unicodeEvidence = Object.fromEntries(challenge.requirements.map(({ key, description }) => [key, { present: true, evidence: description }]));
+  unicodeEvidence[firstRequirement.key] = { present: true, evidence: `${firstRequirement.description} — cafe\u0301` };
+  const unicodeResult = parseEssayEvaluation(makePayload(unicodeEvidence), unicodePrompt, challenge);
+  assert.equal(unicodeResult.criteria[firstRequirement.criterion].score, 25, `${challenge.slug} exact evidence survives harmless whitespace and canonical Unicode differences`);
+}
+
 const academic = ESSAY_CHALLENGES[0];
 const lowPrompt = "Summarize this paper";
 const low = parseEssayEvaluation({
@@ -74,6 +105,14 @@ for (const challenge of ESSAY_CHALLENGES) {
     return Response.json({ choices: [{ message: { content: JSON.stringify(structuredOutput) } }] });
   };
   assert.equal((await evaluateEssayPrompt(prompt, challenge)).totalScore, 84, `structured output for ${challenge.slug} passes validation`);
+  const firstRequirement = challenge.requirements[0];
+  structuredOutput.requirementEvidence[firstRequirement.key] = { present: true, evidence: "A paraphrase that is not a quote from the submitted prompt." };
+  const invalidEvidenceResult = await evaluateEssayPrompt(prompt, challenge);
+  const applicableCap = Math.min(...challenge.scoreCaps
+    .filter(({ whenMissingAny = [], whenMissingAll = [] }) => whenMissingAny.includes(firstRequirement.key) || whenMissingAll.includes(firstRequirement.key))
+    .map(({ maxScore }) => maxScore));
+  assert.ok(invalidEvidenceResult.criteria[firstRequirement.criterion].score <= applicableCap, `OpenAI paraphrased evidence for ${challenge.slug} is capped instead of failing evaluation`);
+  assert.equal(invalidEvidenceResult.totalScore, Object.values(invalidEvidenceResult.criteria).reduce((sum, item) => sum + item.score, 0));
 }
 globalThis.fetch = async () => new Response("unavailable", { status: 503 });
 await assert.rejects(() => evaluateEssayPrompt("A long enough prompt for an unavailable evaluator."), /gagal memproses/);
