@@ -1,4 +1,4 @@
-import { ESSAY_CHALLENGES, ESSAY_CRITERIA, parseEssayEvaluationWithDiagnostics, type EssayChallenge, type EssayEvaluation, type EssayEvaluationDiagnostics } from "./essay-challenge.ts";
+import { ESSAY_CHALLENGES, ESSAY_CRITERIA, ESSAY_EVIDENCE_MAX_LENGTH, parseEssayEvaluationWithDiagnostics, type EssayChallenge, type EssayEvaluation, type EssayEvaluationDiagnostics } from "./essay-challenge.ts";
 
 export function buildEssayEvaluationSchema(challenge: EssayChallenge) {
   const criteria = Object.fromEntries(ESSAY_CRITERIA.map(({ key }) => [key, {
@@ -37,7 +37,7 @@ Rubric anchors:
 - Output Structure: 0–5 when no structure is requested; 6–12 for a vague formatting request; 13–18 for partial organization; 19–22 for clear sections or an organized format; 23–25 for a well-defined usable structure.
 - Accuracy & Responsible AI: 0–5 with no safeguards; 6–12 for generic accuracy wording; 13–18 for partial safeguards; 19–22 for explicit safeguards with a remaining gap; 23–25 only for explicit, relevant safeguards against fabrication and unsupported claims.
 
-For requirementEvidence, judge whether the prompt's meaning explicitly satisfies each requirement. Accept equivalent natural phrasing and concrete examples; do not require the challenge labels or requirement descriptions to appear as fixed keywords. Then copy a short, contiguous, verbatim quote from the submission as evidence for every present=true item. Evidence must be an exact quote, never a paraphrase, summary, or corrected version; if no exact supporting quote can be copied, mark present=false and use an empty evidence string. The server checks the quote against the submitted text and applies the challenge-specific score caps, so do not mark a requirement present based only on inference.
+For requirementEvidence, judge whether the prompt's meaning explicitly satisfies each requirement. Accept equivalent natural phrasing and concrete examples; do not require the challenge labels or requirement descriptions to appear as fixed keywords. Then copy a short, contiguous, verbatim quote of at most ${ESSAY_EVIDENCE_MAX_LENGTH} characters from the submission as evidence for every present=true item. Do not add enclosing quotation marks unless they are part of the submitted text. Evidence must be an exact quote, never a paraphrase, summary, or corrected version; if no exact supporting quote can be copied, mark present=false and use an empty evidence string. The complete user message is the submitted prompt verbatim. The server checks the quote against that exact text and applies the challenge-specific score caps, so do not mark a requirement present based only on inference.
 
 Feedback rules: criterion feedback must explain the score with evidence and identify important omissions. Strengths must describe only what is present. List weaknesses separately from actionable improvements. Give a better example prompt that covers the complete challenge. Keep feedback constructive and concise for university students. Return only the required JSON schema.`;
 }
@@ -63,7 +63,7 @@ export async function evaluateEssayPrompt(
         response_format: { type: "json_schema", json_schema: { name: "promptly_essay_evaluation", strict: true, schema: buildEssayEvaluationSchema(challenge) } },
         messages: [
           { role: "system", content: buildEssayScoringGuidance(challenge) },
-          { role: "user", content: JSON.stringify({ submitted_prompt: answer }) },
+          { role: "user", content: answer },
         ],
       }),
     });

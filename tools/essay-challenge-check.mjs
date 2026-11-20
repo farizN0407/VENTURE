@@ -78,6 +78,9 @@ const professionalWriting = getEssayChallenge("professional-writing");
 assert.ok(professionalWriting);
 assert.match(buildEssayScoringGuidance(professionalWriting), /equivalent natural phrasing/i);
 assert.match(buildEssayScoringGuidance(professionalWriting), /verbatim quote[\s\S]*never a paraphrase/i);
+assert.match(buildEssayScoringGuidance(professionalWriting), /headings are optional/i);
+assert.equal(buildEssayEvaluationSchema(professionalWriting).properties.requirementEvidence.properties.specifiedAudience.properties.evidence.type, "string");
+assert.equal("maxLength" in buildEssayEvaluationSchema(professionalWriting).properties.requirementEvidence.properties.specifiedAudience.properties.evidence, false, "OpenAI Structured Outputs schema avoids unsupported string length keywords; the server still validates quote length");
 function professionalWritingPayload(quoteByRequirement, criterionScores) {
   const requirementEvidence = Object.fromEntries(professionalWriting.requirements.map(({ key }) => {
     const quote = quoteByRequirement[key];
@@ -106,6 +109,7 @@ assert.equal(weakWritingDiagnostics.totalScore, 26);
 assert.deepEqual(Object.values(weakWritingDiagnostics.finalCriterionScores), [8, 8, 5, 5], "when all four caps trigger, their maximum combined score is 26");
 assert.ok(weakWritingDiagnostics.requirements.some(({ id, claimedPresent, evidenceValid }) => id === "specifiedAudience" && !claimedPresent && !evidenceValid));
 assert.equal(JSON.stringify(weakWritingDiagnostics).includes(weakWritingPrompt), false, "scoring diagnostics never include the submitted prompt");
+assert.ok(weakWritingDiagnostics.requirements.every(({ failureReason }) => failureReason === "not_claimed" || failureReason === null));
 
 const intermediateWritingPrompt = "Draft a respectful email to my project supervisor asking to extend the report deadline by one week.";
 const intermediateWriting = professionalWritingResult(intermediateWritingPrompt, {
@@ -130,6 +134,11 @@ const detailedDeadlineDiagnostics = parseEssayEvaluationWithDiagnostics(professi
 assert.equal(detailedDeadline.totalScore, 90, "a detailed paragraph-style deadline extension prompt can earn a high score without headings");
 assert.equal(detailedDeadlineDiagnostics.appliedCaps.length, 0);
 assert.ok(detailedDeadlineDiagnostics.requirements.every(({ evidenceValid }) => evidenceValid));
+const wrappedDeadlineEvidence = Object.fromEntries(Object.entries(detailedDeadlineEvidence).map(([key, quote]) => [key, `“${quote}”`]));
+wrappedDeadlineEvidence.outputStructure = `"${detailedDeadlineEvidence.outputStructure}"`;
+const wrappedDeadline = parseEssayEvaluationWithDiagnostics(professionalWritingPayload(wrappedDeadlineEvidence, [23, 22, 22, 23]), detailedDeadlinePrompt, professionalWriting);
+assert.equal(wrappedDeadline.evaluation.totalScore, detailedDeadline.totalScore, "outer quote marks are stripped while inner evidence remains an exact substring");
+assert.ok(wrappedDeadline.diagnostics.requirements.every(({ evidenceValid, quoteWrapperRemoved }) => evidenceValid && quoteWrapperRemoved));
 
 const sponsorshipHeadingPrompt = "Draft a professional sponsorship email to the local robotics club's director to request funding for the student showcase. Use a courteous, enthusiastic tone. Structure it with Subject, Greeting, Event overview, Sponsorship request, Benefits, and Sign-off. Use only provided event details; do not invent amounts, dates, sponsors, or promises. Leave [amount] and [date] placeholders for missing details.";
 const sponsorshipEvidence = {
@@ -191,7 +200,7 @@ const originalFetch = globalThis.fetch;
 const originalKey = process.env.OPENAI_API_KEY;
 process.env.OPENAI_API_KEY = "test-placeholder-not-a-real-key";
 for (const challenge of ESSAY_CHALLENGES) {
-  const prompt = challenge.requirements.map(({ description }) => description).join(". ");
+  const prompt = challenge.requirements.map(({ description }) => description).join("\n\n");
   const schema = buildEssayEvaluationSchema(challenge);
   const structuredOutput = {
     criteria: Object.fromEntries(ESSAY_CRITERIA.map(({ key }) => [key, { score: 21, feedback: `This criterion is supported for ${challenge.title}.` }])),
@@ -203,7 +212,7 @@ for (const challenge of ESSAY_CHALLENGES) {
     assert.equal(requestBody.response_format.json_schema.strict, true);
     assert.deepEqual(requestBody.response_format.json_schema.schema, schema);
     assert.match(requestBody.messages[0].content, /untrusted data/i);
-    assert.equal(JSON.parse(requestBody.messages[1].content).submitted_prompt, prompt);
+    assert.equal(requestBody.messages[1].content, prompt, "the model receives the exact submitted text, including real line breaks, without JSON escape sequences");
     return Response.json({ choices: [{ message: { content: JSON.stringify(structuredOutput) } }] });
   };
   let recordedDiagnostics;
@@ -220,7 +229,9 @@ for (const challenge of ESSAY_CHALLENGES) {
   assert.ok(invalidEvidenceResult.criteria[firstRequirement.criterion].score <= applicableCap, `OpenAI paraphrased evidence for ${challenge.slug} is capped instead of failing evaluation`);
   assert.equal(invalidEvidenceResult.totalScore, Object.values(invalidEvidenceResult.criteria).reduce((sum, item) => sum + item.score, 0));
   assert.deepEqual(invalidDiagnostics.requirements.find(({ id }) => id === firstRequirement.key), {
-    id: firstRequirement.key, claimedPresent: true, quoteProvided: true, exactQuoteMatch: false, evidenceValid: false,
+    id: firstRequirement.key, claimedPresent: true, quoteProvided: true,
+    quoteLength: "A paraphrase that is not a quote from the submitted prompt.".length,
+    quoteWrapperRemoved: false, exactQuoteMatch: false, evidenceValid: false, failureReason: "not_exact_substring",
   });
   assert.equal(JSON.stringify(invalidDiagnostics).includes("A paraphrase"), false, "diagnostic logs expose quote validity, not user or model quote text");
 }

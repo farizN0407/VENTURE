@@ -110,6 +110,7 @@ export type EssayChallengeSlug = (typeof ESSAY_CHALLENGES)[number]["slug"];
 export const ESSAY_CHALLENGE = ESSAY_CHALLENGES[0];
 export const ESSAY_MAX_LENGTH = 5000;
 export const ESSAY_MIN_LENGTH = 20;
+export const ESSAY_EVIDENCE_MAX_LENGTH = 500;
 export type EssayCriterionScore = { score: number; feedback: string };
 export type EssayEvaluation = {
   criteria: Record<EssayCriterionKey, EssayCriterionScore>;
@@ -122,7 +123,16 @@ export type EssayEvaluation = {
 export type EssayEvaluationDiagnostics = {
   challengeSlug: string;
   rawCriterionScores: Record<EssayCriterionKey, number>;
-  requirements: Array<{ id: string; claimedPresent: boolean; quoteProvided: boolean; exactQuoteMatch: boolean; evidenceValid: boolean }>;
+  requirements: Array<{
+    id: string;
+    claimedPresent: boolean;
+    quoteProvided: boolean;
+    quoteLength: number;
+    quoteWrapperRemoved: boolean;
+    exactQuoteMatch: boolean;
+    evidenceValid: boolean;
+    failureReason: "not_claimed" | "missing_quote" | "quote_too_long" | "not_exact_substring" | null;
+  }>;
   appliedCaps: Array<{ criterion: EssayCriterionKey; maxScore: number; missingRequirementIds: string[]; rawScore: number; finalScore: number }>;
   finalCriterionScores: Record<EssayCriterionKey, number>;
   totalScore: number;
@@ -202,6 +212,21 @@ function normalizeEvidenceForMatch(value: string): string {
   return value.normalize("NFKC").replace(/\p{White_Space}+/gu, " ").trim().toLocaleLowerCase("en-US");
 }
 
+function unwrapEvidenceQuote(value: string): { quote: string; wrapperRemoved: boolean } {
+  let quote = value.trim();
+  let wrapperRemoved = false;
+  const quotePairs: Array<[string, string]> = [
+    ["\"", "\""], ["'", "'"], ["“", "”"], ["‘", "’"], ["«", "»"], ["‹", "›"], ["「", "」"], ["『", "』"],
+  ];
+  while (quote.length >= 2) {
+    const pair = quotePairs.find(([opening, closing]) => quote.startsWith(opening) && quote.endsWith(closing));
+    if (!pair) break;
+    quote = quote.slice(pair[0].length, quote.length - pair[1].length).trim();
+    wrapperRemoved = true;
+  }
+  return { quote, wrapperRemoved };
+}
+
 function hasExactEvidence(submittedPrompt: string, evidence: string): boolean {
   const normalizedPrompt = normalizeEvidenceForMatch(submittedPrompt);
   const normalizedEvidence = normalizeEvidenceForMatch(evidence);
@@ -219,17 +244,31 @@ export function parseEssayEvaluationWithDiagnostics(value: unknown, submittedPro
   for (const { key } of challenge.requirements) {
     const item = rawEvidence[key];
     const entry = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : null;
-    const quote = entry?.evidence;
-    const quoteProvided = typeof quote === "string" && quote.length > 0;
-    const exactQuoteMatch = typeof quote === "string" && quote.length <= 500 && hasExactEvidence(submittedPrompt, quote);
-    const validEvidence = entry?.present === true && exactQuoteMatch;
+    const rawQuote = entry?.evidence;
+    const quoteProvided = typeof rawQuote === "string" && rawQuote.trim().length > 0;
+    const { quote, wrapperRemoved } = typeof rawQuote === "string" ? unwrapEvidenceQuote(rawQuote) : { quote: "", wrapperRemoved: false };
+    const quoteLength = quote.length;
+    const exactQuoteMatch = Boolean(quote) && hasExactEvidence(submittedPrompt, quote);
+    const failureReason = entry?.present !== true
+      ? "not_claimed"
+      : !quoteProvided
+        ? "missing_quote"
+        : quoteLength > ESSAY_EVIDENCE_MAX_LENGTH
+          ? "quote_too_long"
+          : !exactQuoteMatch
+            ? "not_exact_substring"
+            : null;
+    const validEvidence = failureReason === null;
     evidence[key] = { present: validEvidence, evidence: validEvidence ? quote : "" };
     requirementDiagnostics.push({
       id: key,
       claimedPresent: entry?.present === true,
       quoteProvided,
+      quoteLength,
+      quoteWrapperRemoved: wrapperRemoved,
       exactQuoteMatch,
       evidenceValid: validEvidence,
+      failureReason,
     });
   }
   if (!result.criteria || typeof result.criteria !== "object" || Array.isArray(result.criteria)) throw new Error("AI tidak mengembalikan skor rubrik yang valid.");
