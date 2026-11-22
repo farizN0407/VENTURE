@@ -118,6 +118,32 @@ footer{background:#fff;padding:39px 0 21px}.foot-top{display:flex;justify-conten
 .skill em{font-style:normal;font-size:9px;text-align:right;white-space:nowrap}
 @media(max-width:650px){.skill{grid-template-columns:minmax(108px,112px) minmax(24px,1fr) max-content}}
 
+/* Keep the full quiz list on desktop; condense only the phone/tablet homepage. */
+.home-quiz-toggle{display:none;border:0;background:transparent;padding:0;margin-top:16px;cursor:pointer}
+.essay-summary-card{max-width:760px;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:22px}
+.essay-summary-card .num{margin-bottom:12px}
+.essay-summary-card h3{font-size:17px}
+.essay-summary-card p{max-width:530px;margin-bottom:0;font-size:12px}
+.essay-summary-actions{display:grid;gap:12px;justify-items:start}
+.essay-summary-actions .page-back{margin:0;font-size:11px}
+.how-page{min-height:75vh}
+.how-page-content{max-width:980px;margin:40px auto 0}
+.how-page .page-heading{margin-bottom:10px}
+.how-page-intro{font-size:14px;line-height:1.7;color:var(--muted);max-width:600px}
+.how-page .steps{margin-top:45px}
+.how-page .step h2{font:700 18px 'Space Grotesk';margin:12px 0 7px}
+.how-page .step p{font-size:12px;line-height:1.7;color:var(--muted)}
+@media(max-width:767px){
+ .home-quiz-grid:not([data-expanded="true"]) .home-quiz-card:nth-child(n+5){display:none}
+ .home-quiz-toggle{display:inline-block}
+}
+@media(max-width:650px){
+ .essay-summary-card{grid-template-columns:1fr;gap:15px}
+ .essay-summary-actions{gap:8px}
+ .how-page-content{margin-top:28px}
+ .how-page .steps{margin-top:30px}
+}
+
 .pro-challenge{border-color:#f0d36f;background:linear-gradient(145deg,#fffdf5,#fff)}
 .essay-page{max-width:900px;padding-top:28px;padding-bottom:75px}
 .essay-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:34px}

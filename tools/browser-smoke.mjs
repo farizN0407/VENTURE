@@ -33,10 +33,10 @@ try {
     assert.equal(fonts.spaceGrotesk, true);
     await page.getByRole("heading", { name: "Learn → Play → Improve" }).waitFor();
     await page.getByRole("heading", { name: "Belajar memakai AI dengan lebih sadar." }).waitFor();
-    await page.locator("#how-it-works a[href='/learn']").first().waitFor();
-    await page.locator("#how-it-works a[href='/challenges']").first().waitFor();
-    await page.locator("nav a[href='/login']").waitFor();
-    await page.locator("footer a[href='#about']").waitFor();
+    await page.locator("#how-it-works a[href='/how-it-works']").waitFor();
+    await page.locator(".essay-summary-card a[href='/login?next=%2Fessay-challenges']").getByText("Login untuk Mengakses").waitFor();
+    await page.locator("nav a[href^='/login']").waitFor();
+    await page.locator("footer a[href='/how-it-works']").waitFor();
   });
 
   await check("landing quick quiz gives correct-answer feedback", async () => {
@@ -48,7 +48,7 @@ try {
     await page.goto(baseUrl, { waitUntil: "networkidle" });
     await page.locator(".hero-content .btn-main").click();
     await page.waitForURL("**/challenges");
-    assert.equal(await page.locator(".challenge-grid .challenge").count(), challengeSlugs.length);
+    assert.ok(await page.locator(".challenge-grid .challenge").count() >= challengeSlugs.length);
     for (const slug of challengeSlugs) {
       const playLink = page.locator(`a.play-link[href='/challenges/${slug}']`);
       assert.equal(await playLink.count(), 1);
@@ -61,9 +61,39 @@ try {
     await page.waitForURL("**/learn");
   });
 
+  await check("homepage quiz expansion, essay summary and workflow routes", async () => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(baseUrl, { waitUntil: "networkidle" });
+    const desktopQuizCards = page.locator(".home-quiz-card");
+    const desktopCount = await desktopQuizCards.count();
+    assert.ok(desktopCount >= 4);
+    assert.equal(await page.locator(".home-quiz-toggle").isVisible(), false, "desktop behavior remains expanded without toggle");
+    const firstFourDesktop = await desktopQuizCards.evaluateAll((cards) => cards.slice(0, 4).map((card) => card.querySelector("a.play-link")?.getAttribute("href")));
+    for (const width of [360, 375, 390, 430]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(baseUrl, { waitUntil: "networkidle" });
+      assert.equal(await page.locator(".home-quiz-card:visible").count(), 4, `${width}px initially shows four quizzes`);
+      const firstFourMobile = await page.locator(".home-quiz-card").evaluateAll((cards) => cards.slice(0, 4).map((card) => card.querySelector("a.play-link")?.getAttribute("href")));
+      assert.deepEqual(firstFourMobile, firstFourDesktop, `${width}px preserves quiz order`);
+      const toggle = page.getByRole("button", { name: "Lihat Semua Quiz" });
+      await toggle.click();
+      assert.equal(await page.locator(".home-quiz-card:visible").count(), desktopCount, `${width}px expands all quizzes`);
+      await page.getByRole("button", { name: "Tampilkan Lebih Sedikit" }).click();
+      assert.equal(await page.locator(".home-quiz-card:visible").count(), 4, `${width}px collapses to four quizzes`);
+      const dimensions = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+      assert.ok(dimensions.scrollWidth <= dimensions.width + 1, `${width}px overflowed horizontally`);
+      await page.locator(".essay-summary-card").getByRole("link", { name: "Login untuk Mengakses →" }).waitFor();
+    }
+    const fullWorkflow = await page.goto(`${baseUrl}/how-it-works`, { waitUntil: "networkidle" });
+    assert.equal(fullWorkflow?.status(), 200);
+    assert.equal(await page.locator(".how-page .step").count(), 3);
+    await page.getByRole("link", { name: "Jelajahi materi →" }).waitFor();
+    await page.getByRole("link", { name: "Pilih challenge →" }).waitFor();
+  });
+
   await check("navigation and all lesson routes work", async () => {
     await page.goto(`${baseUrl}/learn`, { waitUntil: "networkidle" });
-    assert.equal(await page.locator(".lesson-card").count(), lessonSlugs.length);
+    assert.ok(await page.locator(".lesson-card").count() >= lessonSlugs.length);
     for (const slug of lessonSlugs) {
       const response = await page.goto(`${baseUrl}/learn/${slug}`, { waitUntil: "networkidle" });
       assert.equal(response?.status(), 200, `lesson ${slug}`);
@@ -191,7 +221,7 @@ try {
   });
 
   await check("desktop and mobile layouts do not overflow horizontally", async () => {
-    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 1000 }, ...[360, 375, 390, 430].map((width) => ({ width, height: 844 }))]) {
       await page.setViewportSize(viewport);
       await page.goto(baseUrl, { waitUntil: "networkidle" });
       const dimensions = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));

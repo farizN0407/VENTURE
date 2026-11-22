@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test:browser": "node tools/browser-smoke.mjs",
+    "test:home-browser": "node tools/homepage-mobile-check.mjs",
+    "test:home-essay": "node --experimental-strip-types tools/home-essay-cta-check.mjs",
     "test:username": "node --experimental-strip-types tools/username-check.mjs",
     "test:username:browser": "node tools/username-browser-check.mjs",
     "test:questions": "node tools/question-bank-check.mjs",
