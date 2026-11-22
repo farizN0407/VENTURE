@@ -120,6 +120,7 @@ footer{background:#fff;padding:39px 0 21px}.foot-top{display:flex;justify-conten
 
 /* Keep the full quiz list on desktop; condense only the phone/tablet homepage. */
 .home-quiz-toggle{display:none;border:0;background:transparent;padding:0;margin-top:16px;cursor:pointer}
+.home-material-toggle{display:none;border:0;background:transparent;padding:0;margin-top:16px;cursor:pointer}
 .essay-summary-card{max-width:760px;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:22px}
 .essay-summary-card .num{margin-bottom:12px}
 .essay-summary-card h3{font-size:17px}
@@ -136,6 +137,8 @@ footer{background:#fff;padding:39px 0 21px}.foot-top{display:flex;justify-conten
 @media(max-width:767px){
  .home-quiz-grid:not([data-expanded="true"]) .home-quiz-card:nth-child(n+5){display:none}
  .home-quiz-toggle{display:inline-block}
+ .home-material-grid:not([data-expanded="true"]) .home-material-card:nth-child(n+5){display:none}
+ .home-material-toggle{display:inline-block}
 }
 @media(max-width:650px){
  .essay-summary-card{grid-template-columns:1fr;gap:15px}
