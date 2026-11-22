@@ -9,6 +9,14 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 try {
   const response = await page.goto(baseUrl, { waitUntil: "networkidle" });
   assert.equal(response?.status(), 200);
+  await page.getByRole("heading", { name: /How smart are you with AI/ }).waitFor();
+  assert.equal(await page.locator(".try, .question-card, .pricing-grid, .about-section, .how-section").count(), 0, "redundant homepage sections are removed");
+  assert.equal(await page.locator("#profile").count(), 1, "AI Literacy Profile remains on homepage");
+  assert.equal(await page.locator("#badges").count(), 1, "achievement section remains on homepage");
+  assert.equal(await page.locator("#about").innerText().then((text) => /Belajar menggunakan AI dengan lebih jelas, kritis, dan bertanggung jawab/.test(text)), true, "About navigation target remains in footer tagline");
+  assert.equal(await page.locator(".navlinks a[href='/how-it-works']").count(), 1, "single How it Works navigation link remains");
+  assert.equal(await page.locator(".navlinks a[href='/pricing']").count(), 1, "pricing navigation remains");
+  assert.equal(await page.locator(".nav-login").count(), 2, "guest navigation remains available in the test context");
   const allCount = await page.locator(".home-quiz-card").count();
   const allMaterialCount = await page.locator(".home-material-card").count();
   assert.ok(allCount > 4);
@@ -52,6 +60,15 @@ try {
   assert.equal(await page.locator(".how-page .step").count(), 3);
   await page.getByRole("link", { name: "Jelajahi materi →" }).waitFor();
   await page.getByRole("link", { name: "Pilih challenge →" }).waitFor();
+  const pricing = await page.goto(`${baseUrl}/pricing`, { waitUntil: "networkidle" });
+  assert.equal(pricing?.status(), 200);
+  await page.getByRole("heading", { name: "Promptly Pro" }).waitFor();
+  const challenge = await page.goto(`${baseUrl}/challenges/fix-the-prompt`, { waitUntil: "networkidle" });
+  assert.equal(challenge?.status(), 200);
+  await page.getByRole("heading", { name: "Fix the Prompt", exact: true }).waitFor();
+  const material = await page.goto(`${baseUrl}/learn/prompting`, { waitUntil: "networkidle" });
+  assert.equal(material?.status(), 200);
+  await page.getByRole("heading", { name: "Prompting", exact: true }).waitFor();
   console.log("PASS desktop and 360/375/390/430px quiz/material density, toggle, guest essay CTA, workflow route, and overflow checks");
 } finally {
   await browser.close();
