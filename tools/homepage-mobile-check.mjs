@@ -63,13 +63,32 @@ try {
   const pricing = await page.goto(`${baseUrl}/pricing`, { waitUntil: "networkidle" });
   assert.equal(pricing?.status(), 200);
   await page.getByRole("heading", { name: "Promptly Pro" }).waitFor();
+  const pricingWidths = [1440, 360, 375, 390, 430];
+  for (const width of pricingWidths) {
+    await page.setViewportSize({ width, height: 844 });
+    if (width !== 1440) await page.goto(`${baseUrl}/pricing`, { waitUntil: "networkidle" });
+    assert.match(await page.locator(".plan.featured .price").innerText(), /Rp29\.000\s*\/\s*30 hari/);
+    const paymentNote = await page.locator(".plan.featured .pricing-note").innerText();
+    assert.match(paymentNote, /manual melalui WhatsApp/i);
+    assert.match(paymentNote, /Admin akan memberikan metode dan instruksi/i);
+    assert.match(paymentNote, /setelah pembayaran diterima dan diverifikasi/i);
+    assert.match(paymentNote, /30 hari tanpa perpanjangan otomatis/i);
+    const whatsappCta = page.getByRole("link", { name: "Berlangganan via WhatsApp" });
+    const whatsappUrl = new URL(await whatsappCta.getAttribute("href"));
+    assert.equal(whatsappUrl.origin, "https://wa.me");
+    assert.equal(whatsappUrl.pathname, "/6281188088811");
+    assert.equal(whatsappUrl.searchParams.get("text")?.includes("Email akun Promptly: [isi email terdaftar]"), true, "guest message keeps editable email placeholder");
+    assert.equal(await whatsappCta.getAttribute("target"), "_blank");
+    const pricingDimensions = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+    assert.ok(pricingDimensions.scrollWidth <= pricingDimensions.width + 1, `${width}px pricing overflow: ${JSON.stringify(pricingDimensions)}`);
+  }
   const challenge = await page.goto(`${baseUrl}/challenges/fix-the-prompt`, { waitUntil: "networkidle" });
   assert.equal(challenge?.status(), 200);
   await page.getByRole("heading", { name: "Fix the Prompt", exact: true }).waitFor();
   const material = await page.goto(`${baseUrl}/learn/prompting`, { waitUntil: "networkidle" });
   assert.equal(material?.status(), 200);
   await page.getByRole("heading", { name: "Prompting", exact: true }).waitFor();
-  console.log("PASS desktop and 360/375/390/430px quiz/material density, toggle, guest essay CTA, workflow route, and overflow checks");
+  console.log("PASS desktop and 360/375/390/430px layouts, homepage density, guest WhatsApp checkout, retained routes, and overflow checks");
 } finally {
   await browser.close();
 }

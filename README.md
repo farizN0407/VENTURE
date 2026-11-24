@@ -1,6 +1,6 @@
 # Promptly — AI Literacy
 
-Promptly is a responsive AI literacy learning app built with Next.js App Router, TypeScript, Tailwind CSS, Supabase, and Stripe. The landing page follows the supplied Promptly HTML design. Challenge and lesson content is included in the repository; account-backed progress and billing require external service configuration.
+Promptly is a responsive AI literacy learning app built with Next.js App Router, TypeScript, Tailwind CSS, Supabase, and Stripe. The landing page follows the supplied Promptly HTML design. Challenge and lesson content is included in the repository; account-backed progress requires external service configuration. Promptly Pro subscription requests are handled manually through WhatsApp.
 
 ## Local setup
 
@@ -19,7 +19,7 @@ Open `http://localhost:3000`. Run `npm run lint`, `npx tsc --noEmit`, `npm run t
 - Eight example challenges mapped to seven learning topics. Each topic attempt randomly selects five of ten scenarios and shuffles options. Answers, correct choices, and explanations are revealed after submission.
 - The landing page and account dashboard show a zero-start profile. Overall score is derived from completed quiz attempts; skill scores use stored correct and total answers. Opening a lesson or starting a quiz does not change profile scores.
 - Quiz results remain visible on the result page for guests. Signed-in users can save attempts to Supabase and see recent attempts on `/account`.
-- Pro billing is not offered in the UI. All lessons and included quizzes are currently free.
+- All included lessons and multiple-choice quizzes are free. Promptly Pro provides AI Essay Challenges for Rp29.000 per 30 days through a manual WhatsApp subscription request. It does not renew automatically.
 
 ## Supabase setup and access controls
 
@@ -33,11 +33,13 @@ Topic quiz answers are graded on the server. Answer reviews for both curated and
 
 The admin CMS manages database content with `custom-` slugs so it cannot overwrite the curated lessons and challenges shipped in source. Public reads can see published content only. Correct options and explanations live in a separate restricted table and are returned through grading RPCs, not catalog queries. Existing installations must apply the current schema before relying on these policies.
 
-## Stripe status and safety
+## Promptly Pro payment and legacy Stripe status
 
-Checkout is intentionally disabled by default. There is no Pro-only feature currently available, and live payments are not supported by the checkout route. The route requires an authenticated Supabase user, an `sk_test_` Stripe key, a configured price, webhook secret, Supabase secret (or legacy service-role) key, and explicit `STRIPE_ENABLE_CHECKOUT=true`. It rejects live keys. A signed webhook stores subscription state linked to the Supabase user; the account view recognizes only active or trialing subscriptions whose period has not ended.
+Promptly Pro currently costs Rp29.000 for 30 days. Payment is arranged manually through the WhatsApp link on `/pricing`; the prefilled message uses the signed-in user's registered email or an editable email placeholder for guests. The admin provides payment instructions and manually activates Pro only after receiving and verifying payment. A subscription lasts 30 days and has no automatic renewal. Opening WhatsApp or sending a message does not activate Pro. No Midtrans integration is configured.
 
-To test billing after configuring Supabase and Stripe test mode, set the test price ID, webhook signing secret, and `STRIPE_ENABLE_CHECKOUT=true`. Point the Stripe test webhook to `/api/stripe/webhook` and subscribe to checkout completion and subscription created, updated, and deleted events. Verify the complete test flow before considering any production billing work. Do not replace the checkout guard with a live key or advertise Pro until an actual Pro feature and its server-side authorization have been implemented and reviewed.
+The existing `/api/stripe/checkout` and `/api/stripe/webhook` endpoints are legacy, guarded Stripe test-mode functionality and are not used by the WhatsApp subscription CTA. The checkout endpoint requires an authenticated Supabase user, an `sk_test_` Stripe key, a configured price, webhook secret, Supabase secret (or legacy service-role) key, and explicit `STRIPE_ENABLE_CHECKOUT=true`; it rejects live keys. A signed webhook persists subscription state. Essay access continues to use the existing server-side verified subscription and admin checks, with the existing daily quotas.
+
+If deliberately testing the legacy Stripe endpoint, configure only Stripe test-mode values and verify the complete signed webhook flow. Do not use a live Stripe key or treat a WhatsApp request as verified payment or an activated subscription.
 
 ## Routes
 
@@ -47,7 +49,7 @@ To test billing after configuring Supabase and Stripe test mode, set the test pr
 - `/login` sign in and `/register` account creation
 - `/account` saved quiz attempts, learning progress, recommendations, and subscription status
 - `/admin` server-guarded database content studio (requires the designated Supabase admin)
-- `/pricing` currently available free features and billing status
+- `/pricing` free features and the manual WhatsApp Pro subscription option
 - `/api/quiz-attempts` server-scored quiz result endpoint; authenticated results are persisted when configured
 - `/api/quiz-feedback` feedback for the single landing preview; challenge answers and explanations appear after full quiz submission
 - `/api/module-completions` authenticated lesson progress endpoint
@@ -56,4 +58,4 @@ To test billing after configuring Supabase and Stripe test mode, set the test pr
 
 ## Vercel deployment
 
-The Next.js project root is the repository root (the directory containing `package.json`). Import that root into Vercel and configure the Supabase URL and publishable key plus server-only secret key for account writes. Set the deployed HTTPS origin as `NEXT_PUBLIC_SITE_URL` and allow its `/auth/callback` URL in Supabase Auth. Add Stripe test secrets only when deliberately validating the guarded test checkout. Apply the Supabase schema and designate the admin before testing authenticated features. Deploy and check `/`, `/learn`, `/challenges`, `/login`, `/account`, `/pricing`, and `/admin`. Account storage, CMS, and Stripe behavior require their services and schema to be configured; do not claim these integrations are live until verified.
+The Next.js project root is the repository root (the directory containing `package.json`). Import that root into Vercel and configure the Supabase URL and publishable key plus server-only secret key for account writes. Set the deployed HTTPS origin as `NEXT_PUBLIC_SITE_URL` and allow its `/auth/callback` URL in Supabase Auth. The manual WhatsApp link does not activate subscriptions; an admin must verify payment and update subscription status through the existing authorized process. Add Stripe test secrets only when deliberately validating the guarded legacy test checkout. Apply the Supabase schema and designate the admin before testing authenticated features. Deploy and check `/`, `/learn`, `/challenges`, `/login`, `/account`, `/pricing`, and `/admin`. Account storage and CMS require their services and schema to be configured; do not claim these integrations are live until verified.

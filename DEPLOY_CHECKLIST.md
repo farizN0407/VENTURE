@@ -17,12 +17,14 @@
 - [ ] Promote only reviewed, published AI Literacy CMS content: run `npm run content:export -- --environment=development --project-ref=SOURCE_PROJECT_REF --modules=custom-module-slug --challenges=custom-challenge-slug`, securely transfer the ignored `content-promotion/*.json` bundle, then run `npm run content:import -- --environment=production --project-ref=PRODUCTION_PROJECT_REF --file=filename.json`. Use project references shown in Supabase Project Settings → General; do not use or print API keys. Ensure `.env.production.local` contains the intended production Supabase URL and server-only key before import. The importer verifies the URL project reference, inserts missing rows, skips exact matches, stops on conflicts, and never deletes or updates target rows.
 - [ ] Content bundles include correct answers and explanations. Keep them private, do not commit them, and remove them securely after promotion.
 
-## Stripe
-- [ ] Current checkout is disabled in the UI; all included content is free and no Pro-only feature is active.
-- [ ] For an optional test-only checkout verification, configure a Stripe test key, test price, webhook signing secret, Supabase server-only secret key, and `STRIPE_ENABLE_CHECKOUT=true`.
-- [ ] The checkout handler rejects live Stripe keys. Do not weaken this guard or advertise paid access.
-- [ ] Point the test webhook at `/api/stripe/webhook`, enable checkout and subscription created/updated/deleted events, and verify persistence in Supabase.
-- [ ] Do not accept live payments until a real Pro feature, server-side entitlement checks, webhook persistence, failure handling, and cancellation behavior have been implemented and reviewed.
+## Promptly Pro manual payment
+- [ ] Confirm `/pricing` displays Rp29.000 for 30 days and the WhatsApp CTA opens `wa.me/6281188088811` with the expected prefilled message.
+- [ ] Verify guests see the editable email placeholder and authenticated users see only the email from their Supabase Auth session.
+- [ ] Tell users that payment is manual, the admin provides instructions, and Pro activates only after receipt and payment are verified.
+- [ ] Record Pro for 30 days without automatic renewal; keep the existing limit of 3 successful AI Essay evaluations per day.
+- [ ] A WhatsApp click or submitted proof must never activate Pro. No Midtrans integration is configured.
+- [ ] The separate Stripe endpoints remain guarded test-only functionality and are not the production WhatsApp payment flow. If validating them, use only Stripe test keys, test price, webhook signing secret, Supabase server-only secret key, and `STRIPE_ENABLE_CHECKOUT=true`.
+- [ ] Keep the Stripe live-key rejection guard. Verify legacy test webhook persistence independently from manual payment handling.
 
 ## Vercel
 - [ ] Deploy a preview from the intended branch.
